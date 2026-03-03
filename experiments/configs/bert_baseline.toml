@@ -1,0 +1,29 @@
+# BERT Baseline Experiment Config
+# Student trained with hard-label CE only (no KD, alpha=0)
+
+[teacher]
+model_name = "textattack/bert-base-uncased-SST-2"
+
+[student]
+num_hidden_layers = 4
+hidden_size = 256
+num_attention_heads = 4
+intermediate_size = 1024
+num_labels = 2
+# pretrained_name = "google/bert_uncased_L-4_H-256_A-4"  # Uncomment to init from pretrained
+
+[kd]
+alpha = 0.0          # 0.0 = pure hard-label CE, no KD
+temperature = 2.0    # Unused when alpha=0, but kept for parameter consistency
+
+[training]
+max_seq_length = 128
+batch_size = 32
+learning_rate = 2e-5
+num_epochs = 5
+warmup_ratio = 0.06
+weight_decay = 0.01
+seed = 42
+
+[output]
+dir = "outputs/bert_baseline"
