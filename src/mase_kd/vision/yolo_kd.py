@@ -48,6 +48,10 @@ class YOLOLogitsDistiller:
     def _flatten_logits(self, output: Any) -> torch.Tensor:
         """Flatten nested tensor-like model outputs into a 2D logits tensor."""
         if isinstance(output, torch.Tensor):
+            if output.ndim == 0:
+                return output.reshape(1, 1)
+            if output.shape[0] == 0:
+                return output.reshape(1, 0)
             return output.reshape(output.shape[0], -1)
 
         if isinstance(output, dict):
@@ -61,8 +65,25 @@ class YOLOLogitsDistiller:
             return torch.cat(tensors, dim=1)
 
         if isinstance(output, (list, tuple)):
+            if not output:
+                raise TypeError("Model output list/tuple was empty")
             tensors = [self._flatten_logits(item) for item in output]
-            return torch.cat(tensors, dim=1)
+
+            first_batch = tensors[0].shape[0]
+            if all(tensor.shape[0] == first_batch for tensor in tensors):
+                return torch.cat(tensors, dim=1)
+
+            if all(tensor.shape[0] == 1 for tensor in tensors):
+                max_width = max(tensor.shape[1] for tensor in tensors)
+                padded = []
+                for tensor in tensors:
+                    if tensor.shape[1] < max_width:
+                        pad_width = max_width - tensor.shape[1]
+                        tensor = torch.nn.functional.pad(tensor, (0, pad_width))
+                    padded.append(tensor)
+                return torch.cat(padded, dim=0)
+
+            raise ValueError("Incompatible tensor batch dimensions in model output list")
 
         raise TypeError(f"Unsupported output type for logits distillation: {type(output)}")
 
@@ -79,6 +100,11 @@ class YOLOLogitsDistiller:
             return student_logits, teacher_logits
 
         dim = min(student_logits.shape[1], teacher_logits.shape[1])
+        if dim == 0:
+            raise ValueError(
+                "No shared logits dimension between student and teacher outputs. "
+                "Ensure teacher output is pre-NMS (training-mode forward)."
+            )
         return student_logits[:, :dim], teacher_logits[:, :dim]
 
     def train_step(
@@ -97,8 +123,12 @@ class YOLOLogitsDistiller:
         optimizer.zero_grad(set_to_none=True)
 
         student_output = self.student(images)
+
+        teacher_previous_mode = self.teacher.training
+        self.teacher.train()
         with torch.no_grad():
             teacher_output = self.teacher(images)
+        self.teacher.train(teacher_previous_mode)
 
         student_logits = self._flatten_logits(student_output)
         teacher_logits = self._flatten_logits(teacher_output)
