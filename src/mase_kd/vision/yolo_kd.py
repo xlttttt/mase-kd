@@ -94,7 +94,11 @@ class YOLOLogitsDistiller:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Align student/teacher feature dimensions by truncating to shared width."""
         if student_logits.shape[0] != teacher_logits.shape[0]:
-            raise ValueError("Student and teacher batch dimensions must match")
+            if student_logits.shape[0] == 0 or teacher_logits.shape[0] == 0:
+                raise ValueError("Student/teacher logits have empty batch dimension")
+
+            student_logits = student_logits.mean(dim=0, keepdim=True)
+            teacher_logits = teacher_logits.mean(dim=0, keepdim=True)
 
         if student_logits.shape[1] == teacher_logits.shape[1]:
             return student_logits, teacher_logits
