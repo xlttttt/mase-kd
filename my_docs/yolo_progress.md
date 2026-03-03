@@ -21,11 +21,17 @@
 	- robust output flattening/alignment for teacher-student comparisons,
 	- notebook cell stability across reruns (missing-state guards).
 - Current result: detection KD pipeline is running end-to-end with measurable (small) KD improvement over no-KD baseline.
+- Built and iterated on `cw/yolo_pruning_distillation_cls.ipynb` for classification KD:
+	- switched teacher/student to `yolov8n-cls`,
+	- enabled CIFAR10 label-based hard loss (CE) during KD,
+	- fixed batch-shape issues caused by FX-specialized pruned graph,
+	- added validation reporting for CE, KD loss, and top-1 accuracy (teacher / KD student / no-KD student).
+- Current classification observation: raw top-1 accuracy against CIFAR10 labels is not yet meaningful with the current ImageNet-style `yolov8n-cls` teacher head.
 
 ## Next step
 
-- Move to **classification** distillation as the next milestone:
-	- use `yolov8n-cls` teacher/student setup,
-	- include true classification hard loss (cross-entropy with CIFAR10 labels),
-	- track top-1 accuracy + CE on validation,
-	- compare pruned no-KD vs KD student fairly.
+- Fine-tune `yolov8n-cls` on CIFAR10 so it becomes a proper teacher for this task:
+	- adapt/fine-tune the classification head for CIFAR10 label space,
+	- train and validate to obtain strong CIFAR10 top-1 accuracy,
+	- save the fine-tuned checkpoint for teacher initialization,
+	- re-run teacher→pruned-student KD comparison with task-faithful accuracy metrics.
