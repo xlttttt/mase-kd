@@ -87,6 +87,39 @@ class YOLOLogitsDistiller:
 
         raise TypeError(f"Unsupported output type for logits distillation: {type(output)}")
 
+    @staticmethod
+    def _extract_logits_with_batch(output: Any, batch_size: int) -> torch.Tensor | None:
+        """Recursively search nested model output for the first tensor whose leading
+        dimension matches *batch_size*, then return it flattened to ``[batch_size, D]``.
+
+        Returns ``None`` if no matching tensor is found.
+        """
+        if isinstance(output, torch.Tensor):
+            if output.ndim >= 2 and output.shape[0] == batch_size:
+                return output.reshape(batch_size, -1)
+            if output.ndim >= 2 and output.shape[0] == 1 and batch_size > 1:
+                return output.reshape(1, -1).expand(batch_size, -1)
+            return None
+
+        if isinstance(output, dict):
+            for key in sorted(output.keys()):
+                value = output[key]
+                if isinstance(value, (torch.Tensor, dict, list, tuple)):
+                    logits = YOLOLogitsDistiller._extract_logits_with_batch(value, batch_size)
+                    if logits is not None:
+                        return logits
+            return None
+
+        if isinstance(output, (list, tuple)):
+            for item in output:
+                if isinstance(item, (torch.Tensor, dict, list, tuple)):
+                    logits = YOLOLogitsDistiller._extract_logits_with_batch(item, batch_size)
+                    if logits is not None:
+                        return logits
+            return None
+
+        return None
+
     def _align_logits(
         self,
         student_logits: torch.Tensor,
