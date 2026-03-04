@@ -7,7 +7,12 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from mase_kd.core.losses import DistillationLossConfig, compute_distillation_loss
+from mase_kd.core.losses import (
+    DistillationLossConfig,
+    compute_distillation_loss,
+    hard_label_ce_loss,
+    soft_logit_kl_loss,
+)
 
 
 TaskLossFn = Callable[[Any, dict[str, Any]], torch.Tensor]
@@ -26,7 +31,8 @@ class YOLOLogitsDistiller:
     """Minimal YOLO logits distillation trainer.
 
     Accepts a train_loader and optimizer at construction time so that the full
-    training loop can be driven by a single ``train(steps)`` call.
+    training loop can be driven by a single ``train(steps)`` call.  An optional
+    ``val_loader`` enables post-training evaluation via ``evaluate()``.
 
     Args:
         teacher: Frozen teacher model.
@@ -36,6 +42,11 @@ class YOLOLogitsDistiller:
         train_loader: DataLoader that yields ``(images, labels)`` pairs.
         optimizer: Optimizer pre-configured for the student parameters.
         num_train_epochs: Number of epochs to train when ``train()`` is called.
+        val_loader: Optional DataLoader used by ``evaluate()`` to measure
+            validation metrics.
+        eval_teacher: When ``True``, ``evaluate()`` reports metrics for both
+            the teacher and the student.  When ``False``, only the student is
+            evaluated.
     """
 
     def __init__(
@@ -47,6 +58,8 @@ class YOLOLogitsDistiller:
         train_loader: DataLoader | None = None,
         optimizer: torch.optim.Optimizer | None = None,
         num_train_epochs: int = 1,
+        val_loader: DataLoader | None = None,
+        eval_teacher: bool = True,
     ) -> None:
         kd_config.validate()
         self.teacher = teacher.to(device)
@@ -56,6 +69,8 @@ class YOLOLogitsDistiller:
         self.train_loader = train_loader
         self.optimizer = optimizer
         self.num_train_epochs = num_train_epochs
+        self.val_loader = val_loader
+        self.eval_teacher = eval_teacher
 
         self.teacher.eval()
         for parameter in self.teacher.parameters():
@@ -279,6 +294,115 @@ class YOLOLogitsDistiller:
                     )
 
         return loss_history
+
+
+    @torch.no_grad()
+    def evaluate(self) -> dict[str, Any]:
+        """Evaluate teacher (when ``eval_teacher=True``) and student on ``val_loader``.
+
+        Computes top-1 accuracy, average cross-entropy loss, and average
+        forward time per batch for each model, plus the validation KD
+        (KL-divergence) loss between teacher and student.
+
+        Returns:
+            A dict with keys:
+
+            * ``"student"`` – metrics dict for the distilled student.
+            * ``"teacher"`` – metrics dict for the teacher (only when
+              ``eval_teacher=True``).
+            * ``"val_kd_loss"`` – average KD loss over the validation set.
+            * ``"kd_batches"`` – number of batches used for the KD loss.
+
+            Each per-model metrics dict contains ``top1_acc``,
+            ``avg_ce_loss``, ``avg_forward_ms_per_batch``, ``samples``,
+            and ``batches``.
+
+        Raises:
+            ValueError: If ``val_loader`` was not supplied at construction.
+        """
+        import time
+
+        if self.val_loader is None:
+            raise ValueError(
+                "val_loader is required for evaluate(): supply it to "
+                "YOLOLogitsDistiller() via the `val_loader` argument."
+            )
+
+        def _eval_model(model: nn.Module) -> dict[str, Any]:
+            model.eval()
+            batches = 0
+            samples = 0
+            total_forward_ms = 0.0
+            correct_top1 = 0
+            total_ce_loss = 0.0
+
+            for images, labels in self.val_loader:
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize()
+                t0 = time.perf_counter()
+                outputs = model(images)
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize()
+                t1 = time.perf_counter()
+
+                logits = self._extract_logits_with_batch(outputs, images.shape[0])
+                if logits is None or logits.numel() == 0:
+                    continue
+
+                total_forward_ms += (t1 - t0) * 1000.0
+                batches += 1
+                samples += images.shape[0]
+
+                max_label = int(labels.max().item())
+                if logits.shape[1] > max_label:
+                    preds = logits.argmax(dim=1)
+                    correct_top1 += int((preds == labels).sum().item())
+                    total_ce_loss += hard_label_ce_loss(logits, labels).item()
+
+            return {
+                "batches": batches,
+                "samples": samples,
+                "avg_forward_ms_per_batch": total_forward_ms / max(batches, 1),
+                "top1_acc": correct_top1 / max(samples, 1),
+                "avg_ce_loss": total_ce_loss / max(batches, 1),
+            }
+
+        results: dict[str, Any] = {}
+        if self.eval_teacher:
+            results["teacher"] = _eval_model(self.teacher)
+        results["student"] = _eval_model(self.student)
+
+        # KD (KL-divergence) loss: teacher vs distilled student
+        self.teacher.eval()
+        self.student.eval()
+        total_kd_loss = 0.0
+        used_batches = 0
+        for images, labels in self.val_loader:
+            images = images.to(self.device)
+            labels = labels.to(self.device)
+            teacher_outputs = self.teacher(images)
+            student_outputs = self.student(images)
+
+            teacher_logits = self._extract_logits_with_batch(teacher_outputs, labels.shape[0])
+            student_logits = self._extract_logits_with_batch(student_outputs, labels.shape[0])
+            if teacher_logits is None or student_logits is None:
+                continue
+
+            try:
+                student_logits, teacher_logits = self._align_logits(student_logits, teacher_logits)
+            except ValueError:
+                continue
+
+            total_kd_loss += soft_logit_kl_loss(
+                student_logits, teacher_logits, self.kd_config.temperature
+            ).item()
+            used_batches += 1
+
+        results["val_kd_loss"] = total_kd_loss / max(used_batches, 1)
+        results["kd_batches"] = used_batches
+        return results
 
 
 def build_mase_yolo_detection_model(checkpoint: str) -> nn.Module:

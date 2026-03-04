@@ -22,6 +22,11 @@
 	- `train_step` `optimizer` parameter made optional — falls back to `self.optimizer`,
 	- new `train()` method drives the full epoch-based loop and returns `loss_history`; no arguments required for a standard run,
 	- notebook KD cell reduced to constructing the distiller and calling `distiller_cls.train()`.
+- **Evaluation integrated into `YOLOLogitsDistiller`**:
+	- two new constructor arguments: `val_loader: DataLoader | None = None` and `eval_teacher: bool = True`,
+	- new `evaluate()` method (`@torch.no_grad()`) runs on `val_loader` and returns a dict with keys `"student"`, `"teacher"` (only when `eval_teacher=True`), `"val_kd_loss"`, and `"kd_batches"`; each model dict contains `top1_acc`, `avg_ce_loss`, `avg_forward_ms_per_batch`, `samples`, and `batches`,
+	- `hard_label_ce_loss` and `soft_logit_kl_loss` imported directly into `yolo_kd.py` to support the evaluation logic,
+	- notebook evaluation cell updated to call `distiller_cls.evaluate()` for teacher and distilled student; the pruned-no-KD baseline is kept as a standalone `evaluate_model_on_cifar10_val` call (that model is not managed by the distiller).
 - **Switched from step-based to epoch-based training**:
 	- `YOLOLogitsDistiller.__init__` accepts `num_train_epochs: int = 1`; `train()` iterates over the full loader for that many epochs,
 	- config variable renamed from `cifar_kd_steps` to `cifar_kd_epochs` (currently set to 5).
