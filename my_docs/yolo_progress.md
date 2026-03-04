@@ -29,7 +29,7 @@
 	- notebook evaluation cell updated to call `distiller_cls.evaluate()` for teacher and distilled student; the pruned-no-KD baseline is kept as a standalone `evaluate_model_on_cifar10_val` call (that model is not managed by the distiller).
 - **Switched from step-based to epoch-based training**:
 	- `YOLOLogitsDistiller.__init__` accepts `num_train_epochs: int = 1`; `train()` iterates over the full loader for that many epochs,
-	- config variable renamed from `cifar_kd_steps` to `cifar_kd_epochs` (currently set to 5).
+	- config variable renamed from `cifar_kd_steps` to `cifar_kd_epochs` (currently set to 1).
 - **Full CIFAR10 dataset** used for both training and evaluation (previously capped at 2048 train / 512 val subsets); `Subset` and related index logic removed; variables renamed `train_full` → `train_dataset`, `val_full` → `val_dataset`.
 
 ## Next step

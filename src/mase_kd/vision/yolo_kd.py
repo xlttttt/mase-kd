@@ -201,11 +201,8 @@ class YOLOLogitsDistiller:
 
         student_output = self.student(images)
 
-        teacher_previous_mode = self.teacher.training
-        self.teacher.train()
         with torch.no_grad():
             teacher_output = self.teacher(images)
-        self.teacher.train(teacher_previous_mode)
 
         student_logits = self._flatten_logits(student_output)
         teacher_logits = self._flatten_logits(teacher_output)
