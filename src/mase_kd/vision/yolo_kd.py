@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 import torch
 from torch import nn
+from torch.utils.data import DataLoader
 
 from mase_kd.core.losses import DistillationLossConfig, compute_distillation_loss
 
@@ -24,8 +25,16 @@ class YOLOLogitsKDOutput:
 class YOLOLogitsDistiller:
     """Minimal YOLO logits distillation trainer.
 
-    This first version focuses on soft-logit KD and optionally accepts
-    an external task loss function for the hard-label component.
+    Accepts a train_loader and optimizer at construction time so that the full
+    training loop can be driven by a single ``train(steps)`` call.
+
+    Args:
+        teacher: Frozen teacher model.
+        student: Student model to be trained.
+        kd_config: Distillation loss hyper-parameters.
+        device: Device to run on.
+        train_loader: DataLoader that yields ``(images, labels)`` pairs.
+        optimizer: Optimizer pre-configured for the student parameters.
     """
 
     def __init__(
@@ -34,12 +43,16 @@ class YOLOLogitsDistiller:
         student: nn.Module,
         kd_config: DistillationLossConfig,
         device: torch.device | str = "cpu",
+        train_loader: DataLoader | None = None,
+        optimizer: torch.optim.Optimizer | None = None,
     ) -> None:
         kd_config.validate()
         self.teacher = teacher.to(device)
         self.student = student.to(device)
         self.kd_config = kd_config
         self.device = torch.device(device)
+        self.train_loader = train_loader
+        self.optimizer = optimizer
 
         self.teacher.eval()
         for parameter in self.teacher.parameters():
@@ -147,10 +160,19 @@ class YOLOLogitsDistiller:
     def train_step(
         self,
         batch: dict[str, Any],
-        optimizer: torch.optim.Optimizer,
+        optimizer: torch.optim.Optimizer | None = None,
         task_loss_fn: TaskLossFn | None = None,
     ) -> YOLOLogitsKDOutput:
-        """Run one optimization step with logits distillation."""
+        """Run one optimization step with logits distillation.
+
+        If *optimizer* is ``None``, ``self.optimizer`` (set at construction) is used.
+        """
+        optimizer = optimizer if optimizer is not None else self.optimizer
+        if optimizer is None:
+            raise ValueError(
+                "No optimizer provided: pass one to train_step() or supply it to "
+                "YOLOLogitsDistiller() via the `optimizer` argument."
+            )
         images = batch["images"].to(self.device)
         targets = batch.get("targets")
         if isinstance(targets, torch.Tensor):
@@ -196,6 +218,67 @@ class YOLOLogitsDistiller:
             hard_loss=float(hard_loss.detach().cpu().item()),
             soft_loss=float(soft_loss.detach().cpu().item()),
         )
+
+    def train(
+        self,
+        steps: int,
+        log_every: int = 10,
+        task_loss_fn: TaskLossFn | None = None,
+    ) -> list[float]:
+        """Run the full KD training loop for *steps* optimizer steps.
+
+        Requires ``self.train_loader`` and ``self.optimizer`` to be set at
+        construction time.
+
+        Args:
+            steps: Total number of optimizer steps to run.
+            log_every: Print a progress line every this many steps (and on
+                the first and last step). Set to 0 to suppress all output.
+            task_loss_fn: Optional external task-loss function forwarded to
+                each ``train_step`` call.
+
+        Returns:
+            A list of ``total_loss`` values, one per step.
+        """
+        if self.train_loader is None:
+            raise ValueError(
+                "train_loader is required for train(): supply it to "
+                "YOLOLogitsDistiller() via the `train_loader` argument."
+            )
+        if self.optimizer is None:
+            raise ValueError(
+                "optimizer is required for train(): supply it to "
+                "YOLOLogitsDistiller() via the `optimizer` argument."
+            )
+
+        loss_history: list[float] = []
+        train_iter = iter(self.train_loader)
+
+        for step in range(1, steps + 1):
+            try:
+                images, labels = next(train_iter)
+            except StopIteration:
+                train_iter = iter(self.train_loader)
+                images, labels = next(train_iter)
+
+            batch = {
+                "images": images.to(self.device),
+                "targets": labels.to(self.device),
+            }
+
+            output = self.train_step(
+                batch=batch,
+                task_loss_fn=task_loss_fn,
+            )
+            loss_history.append(output.total_loss)
+
+            if log_every > 0 and (step == 1 or step % log_every == 0 or step == steps):
+                print(
+                    f"Step {step:03d} | total={output.total_loss:.6f} | "
+                    f"hard={output.hard_loss:.6f} | soft={output.soft_loss:.6f}"
+                )
+
+        return loss_history
 
 
 def build_mase_yolo_detection_model(checkpoint: str) -> nn.Module:
