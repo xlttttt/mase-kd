@@ -35,6 +35,7 @@ class YOLOLogitsDistiller:
         device: Device to run on.
         train_loader: DataLoader that yields ``(images, labels)`` pairs.
         optimizer: Optimizer pre-configured for the student parameters.
+        num_train_epochs: Number of epochs to train when ``train()`` is called.
     """
 
     def __init__(
@@ -45,6 +46,7 @@ class YOLOLogitsDistiller:
         device: torch.device | str = "cpu",
         train_loader: DataLoader | None = None,
         optimizer: torch.optim.Optimizer | None = None,
+        num_train_epochs: int = 1,
     ) -> None:
         kd_config.validate()
         self.teacher = teacher.to(device)
@@ -53,6 +55,7 @@ class YOLOLogitsDistiller:
         self.device = torch.device(device)
         self.train_loader = train_loader
         self.optimizer = optimizer
+        self.num_train_epochs = num_train_epochs
 
         self.teacher.eval()
         for parameter in self.teacher.parameters():
@@ -221,24 +224,22 @@ class YOLOLogitsDistiller:
 
     def train(
         self,
-        steps: int,
         log_every: int = 10,
         task_loss_fn: TaskLossFn | None = None,
     ) -> list[float]:
-        """Run the full KD training loop for *steps* optimizer steps.
+        """Run the full KD training loop for ``self.num_train_epochs`` epochs.
 
         Requires ``self.train_loader`` and ``self.optimizer`` to be set at
         construction time.
 
         Args:
-            steps: Total number of optimizer steps to run.
-            log_every: Print a progress line every this many steps (and on
-                the first and last step). Set to 0 to suppress all output.
+            log_every: Print a progress line every this many batches within
+                each epoch. Set to 0 to suppress per-batch output.
             task_loss_fn: Optional external task-loss function forwarded to
                 each ``train_step`` call.
 
         Returns:
-            A list of ``total_loss`` values, one per step.
+            A list of ``total_loss`` values, one per batch across all epochs.
         """
         if self.train_loader is None:
             raise ValueError(
@@ -252,31 +253,30 @@ class YOLOLogitsDistiller:
             )
 
         loss_history: list[float] = []
-        train_iter = iter(self.train_loader)
 
-        for step in range(1, steps + 1):
-            try:
-                images, labels = next(train_iter)
-            except StopIteration:
-                train_iter = iter(self.train_loader)
-                images, labels = next(train_iter)
+        for epoch in range(1, self.num_train_epochs + 1):
+            num_batches = len(self.train_loader)
+            print(f"Epoch {epoch}/{self.num_train_epochs}")
+            for batch_idx, (images, labels) in enumerate(self.train_loader, start=1):
+                batch = {
+                    "images": images.to(self.device),
+                    "targets": labels.to(self.device),
+                }
 
-            batch = {
-                "images": images.to(self.device),
-                "targets": labels.to(self.device),
-            }
-
-            output = self.train_step(
-                batch=batch,
-                task_loss_fn=task_loss_fn,
-            )
-            loss_history.append(output.total_loss)
-
-            if log_every > 0 and (step == 1 or step % log_every == 0 or step == steps):
-                print(
-                    f"Step {step:03d} | total={output.total_loss:.6f} | "
-                    f"hard={output.hard_loss:.6f} | soft={output.soft_loss:.6f}"
+                output = self.train_step(
+                    batch=batch,
+                    task_loss_fn=task_loss_fn,
                 )
+                loss_history.append(output.total_loss)
+
+                if log_every > 0 and (
+                    batch_idx == 1 or batch_idx % log_every == 0 or batch_idx == num_batches
+                ):
+                    print(
+                        f"  Batch {batch_idx:04d}/{num_batches} | "
+                        f"total={output.total_loss:.6f} | "
+                        f"hard={output.hard_loss:.6f} | soft={output.soft_loss:.6f}"
+                    )
 
         return loss_history
 
