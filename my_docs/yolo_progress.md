@@ -32,6 +32,12 @@
 	- config variable renamed from `cifar_kd_steps` to `cifar_kd_epochs` (currently set to 1).
 - **Full CIFAR10 dataset** used for both training and evaluation (previously capped at 2048 train / 512 val subsets); `Subset` and related index logic removed; variables renamed `train_full` → `train_dataset`, `val_full` → `val_dataset`.
 
+### Teacher/student logits dimension mismatch fix (`src/mase_kd/vision/yolo_kd.py`)
+- **Root cause identified**: the ultralytics `Classify` head returns a plain `[B, nc]` tensor in training mode but a `(softmax_probs, raw_logits)` tuple of two `[B, nc]` tensors in eval mode. The teacher runs in eval mode (frozen), the student runs in training mode, so `_flatten_logits` was concatenating the teacher's two tensors into `[B, 2*nc]` while the student produced `[B, nc]` — a 2× dimension mismatch. `_align_logits` was silently masking this by truncating to the smaller dimension.
+- **Fix (Approach 1 + 3)**:
+  - New `_unwrap_classify_output` static method: detects the 2-element same-shaped tensor tuple and returns the second element (raw logits), passes everything else through unchanged. Applied to both teacher and student outputs in `train_step` and in the KD-loss loop inside `evaluate()` before `_flatten_logits` is called.
+  - `_align_logits` rewritten as a strict shape assertion — raises `ValueError` on any mismatch instead of silently truncating, so future regressions surface immediately.
+
 ## Next step
 
 - Run the updated classification notebook end-to-end and verify meaningful accuracy differences between the three models.

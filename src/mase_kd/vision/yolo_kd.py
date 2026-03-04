@@ -119,6 +119,27 @@ class YOLOLogitsDistiller:
         raise TypeError(f"Unsupported output type for logits distillation: {type(output)}")
 
     @staticmethod
+    def _unwrap_classify_output(output: Any) -> Any:
+        """Unwrap the ultralytics Classify head's eval-mode ``(softmax, logits)`` tuple.
+
+        When the Classify head runs in eval mode it returns
+        ``(softmax_probs, raw_logits)`` — two tensors with identical shapes.
+        For distillation we only need the raw logits (the second element).
+
+        If the output is not a 2-element tuple/list of same-shaped tensors the
+        input is returned unchanged, so this is safe to call unconditionally.
+        """
+        if isinstance(output, (tuple, list)) and len(output) == 2:
+            a, b = output
+            if (
+                isinstance(a, torch.Tensor)
+                and isinstance(b, torch.Tensor)
+                and a.shape == b.shape
+            ):
+                return b  # raw logits (second element by ultralytics convention)
+        return output
+
+    @staticmethod
     def _extract_logits_with_batch(output: Any, batch_size: int) -> torch.Tensor | None:
         """Recursively search nested model output for the first tensor whose leading
         dimension matches *batch_size*, then return it flattened to ``[batch_size, D]``.
@@ -156,24 +177,21 @@ class YOLOLogitsDistiller:
         student_logits: torch.Tensor,
         teacher_logits: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Align student/teacher feature dimensions by truncating to shared width."""
-        if student_logits.shape[0] != teacher_logits.shape[0]:
-            if student_logits.shape[0] == 0 or teacher_logits.shape[0] == 0:
-                raise ValueError("Student/teacher logits have empty batch dimension")
+        """Verify that student and teacher logits have compatible shapes.
 
-            student_logits = student_logits.mean(dim=0, keepdim=True)
-            teacher_logits = teacher_logits.mean(dim=0, keepdim=True)
-
-        if student_logits.shape[1] == teacher_logits.shape[1]:
-            return student_logits, teacher_logits
-
-        dim = min(student_logits.shape[1], teacher_logits.shape[1])
-        if dim == 0:
+        Raises ``ValueError`` on any mismatch so that silent data-corruption
+        (e.g. from the Classify head returning different formats in train vs
+        eval mode) is caught immediately.
+        """
+        if student_logits.shape != teacher_logits.shape:
             raise ValueError(
-                "No shared logits dimension between student and teacher outputs. "
-                "Ensure teacher output is pre-NMS (training-mode forward)."
+                f"Logits shape mismatch: student {tuple(student_logits.shape)} vs "
+                f"teacher {tuple(teacher_logits.shape)}. "
+                "This usually means the Classify head returned different formats "
+                "in eval vs train mode — ensure _unwrap_classify_output() is "
+                "applied to both outputs before flattening."
             )
-        return student_logits[:, :dim], teacher_logits[:, :dim]
+        return student_logits, teacher_logits
 
     def train_step(
         self,
@@ -203,6 +221,9 @@ class YOLOLogitsDistiller:
 
         with torch.no_grad():
             teacher_output = self.teacher(images)
+
+        student_output = self._unwrap_classify_output(student_output)
+        teacher_output = self._unwrap_classify_output(teacher_output)
 
         student_logits = self._flatten_logits(student_output)
         teacher_logits = self._flatten_logits(teacher_output)
@@ -379,8 +400,8 @@ class YOLOLogitsDistiller:
         for images, labels in self.val_loader:
             images = images.to(self.device)
             labels = labels.to(self.device)
-            teacher_outputs = self.teacher(images)
-            student_outputs = self.student(images)
+            teacher_outputs = self._unwrap_classify_output(self.teacher(images))
+            student_outputs = self._unwrap_classify_output(self.student(images))
 
             teacher_logits = self._extract_logits_with_batch(teacher_outputs, labels.shape[0])
             student_logits = self._extract_logits_with_batch(student_outputs, labels.shape[0])
