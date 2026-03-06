@@ -1,0 +1,53 @@
+# ResNet18 / CIFAR-100 smoke configuration
+# Purpose: Fast A-E pipeline validation (~2-5 min on CPU, <1 min on GPU)
+# Use:   python -m mase_kd.runners.run_pipeline \
+#             --model resnet18 --dataset cifar100 \
+#             --sparsity 0.5 --profile smoke
+profile: smoke
+
+model:
+  arch: resnet18
+  num_classes: 100
+  teacher_arch: resnet18  # dense A-checkpoint reused as KD teacher for D/E
+
+teacher:
+  arch: resnet18
+
+data:
+  dir: datasets/cifar100
+  dataset: cifar100
+  num_classes: 100
+  val_split: 0.1
+  subset_size: 5000   # 5 000 train + 500 val from the 50 000 CIFAR-100 train images
+
+dense_training:
+  epochs: 3           # one extra epoch vs cifar10 smoke; 100 classes converge more slowly
+  batch_size: 128
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  lr_schedule: cosine
+  seed: 42
+
+pruning:
+  sparsity: 0.5
+
+finetune:
+  epochs: 1
+  batch_size: 128
+  learning_rate: 0.001
+
+kd:
+  alpha: 0.5
+  temperature: 4.0
+  epochs: 1
+  batch_size: 128
+  learning_rate: 0.001
+
+kd_finetune:
+  epochs: 1
+  batch_size: 128
+  learning_rate: 0.0001
+
+output:
+  dir: outputs/resnet18/cifar100
