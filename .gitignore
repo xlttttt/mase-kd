@@ -175,3 +175,5 @@ test-trainer/
 docs/tutorials/difflogic/data-mnist/outputs/
 datasets/
 runs/
+/outputs/
+CLAUDE.md
