@@ -1,0 +1,27 @@
+# YOLO Baseline Experiment Config
+# Train YOLOv8n student from scratch without KD (alpha=0, hard detection loss only)
+
+teacher_weights: "yolov8m.pt"
+student_arch: "yolov8n.yaml"
+student_weights: null            # null = train from scratch (random init)
+
+# Dataset: use coco8.yaml (8-image subset) for quick testing
+# Replace with coco.yaml for full COCO (requires download: ~20GB)
+data_yaml: "coco8.yaml"
+
+kd:
+  alpha: 0.0       # 0.0 = no KD, pure Ultralytics detection loss
+  temperature: 2.0
+
+training:
+  epochs: 50
+  batch_size: 16
+  imgsz: 640
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  use_amp: true
+  workers: 8
+  seed: 42
+
+output_dir: "outputs/yolo_baseline"
