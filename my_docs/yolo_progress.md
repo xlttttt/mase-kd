@@ -48,7 +48,29 @@
 - **Memory cleanup cell** inserted between the finetune section and the distillation section: deletes `ultra_teacher`, `student_seed_cls_model`, `mg_cls`, `pruned_no_kd_model`, `pruned_finetuned_model`, and `ft_optimizer` from globals, then calls `gc.collect()` and `torch.cuda.empty_cache()`. Metrics dicts are preserved; `teacher_cls_model` and `student_cls_model` are kept for distillation.
 - **Final summary table** widened to 45 chars and rows updated for all 4 models.
 
+## Current status (Mar 20, 2026)
+
+### Upgraded teacher/student pair: yolov8x-cls → yolov8m-cls (`cw/yolo_pruning_distillation_cls_5.ipynb`)
+
+- Teacher upgraded to `yolov8x-cls` (fine-tuned on CIFAR10), student seed upgraded to `yolov8m-cls` (fine-tuned on CIFAR10).
+- Post-pruning accuracy reported as **82.74%**, but after CE-only fine-tuning or KD the model collapsed to ~13.76% (near-random for 10 classes).
+
+### Root-cause analysis and fixes for post-pruning training collapse
+
+Two distinct bugs identified:
+
+**Bug 1 — Learning rate too high**
+- `lr = 1e-3` is the default Adam LR for training from scratch; it is far too aggressive when fine-tuning a model that already achieves 82.74%.
+- Over 3 epochs × ~3125 batches the pre-trained weights are overwritten before the model can re-converge, causing accuracy to collapse. The fix is to reduce `lr` to `1e-4` or `5e-5`.
+
+**Bug 2 — Double-softmax on teacher logits (fixed in `src/mase_kd/vision/yolo_kd.py`)**
+- The ultralytics `Classify` head does `return x if self.training else x.softmax(1)`. Because `__init__` calls `self.teacher.eval()`, every teacher forward during `train_step` and the KD-loss loop in `evaluate()` returned **softmax probabilities**, not raw logits.
+- `_unwrap_classify_output` did not help — it only matches a 2-element tuple; a single softmax tensor passes through unchanged.
+- `soft_logit_kl_loss` then computed `F.softmax(softmax_probs / T, dim=-1)` — a double-softmax that produces severely distorted, uniform soft targets.
+- **Fix**: teacher is now temporarily switched to `train()` inside a `torch.no_grad()` block for each forward call (in both `train_step` and the KD-loss loop in `evaluate()`), then immediately restored to `eval()`. This makes the Classify head return raw logits without computing or accumulating any gradients.
+- `_unwrap_classify_output` docstring corrected to reflect actual ultralytics behaviour and document the train-mode pattern.
+
 ## Next step
 
-- Run the updated classification notebook end-to-end and record accuracy for all 4 models.
+- Re-run `cw/yolo_pruning_distillation_cls_5.ipynb` with `lr = 1e-4` after the double-softmax fix and record accuracy for all 4 models.
 - Begin BERT KD pipeline (`src/mase_kd/nlp/bert_kd.py`).

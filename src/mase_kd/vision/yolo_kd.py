@@ -25,6 +25,8 @@ class YOLOLogitsKDOutput:
     total_loss: float
     hard_loss: float
     soft_loss: float
+    top1_acc: float = float("nan")
+    top5_acc: float = float("nan")
 
 
 class YOLOLogitsDistiller:
@@ -256,17 +258,38 @@ class YOLOLogitsDistiller:
         total.backward()
         optimizer.step()
 
+        # Compute top-1 / top-5 accuracy from the student logits.
+        top1_acc = float("nan")
+        top5_acc = float("nan")
+        if (
+            targets is not None
+            and isinstance(targets, torch.Tensor)
+            and targets.ndim == 1
+            and student_logits.shape[1] > 0
+        ):
+            with torch.no_grad():
+                n_classes = student_logits.shape[1]
+                preds_top1 = student_logits.argmax(dim=1)
+                top1_acc = float((preds_top1 == targets).float().mean().item())
+                k = min(5, n_classes)
+                top_k_indices = student_logits.topk(k, dim=1).indices
+                top5_acc = float(
+                    (top_k_indices == targets.unsqueeze(1)).any(dim=1).float().mean().item()
+                )
+
         return YOLOLogitsKDOutput(
             total_loss=float(total.detach().cpu().item()),
             hard_loss=float(hard_loss.detach().cpu().item()),
             soft_loss=float(soft_loss.detach().cpu().item()),
+            top1_acc=top1_acc,
+            top5_acc=top5_acc,
         )
 
     def train(
         self,
         log_every: int = 10,
         task_loss_fn: TaskLossFn | None = None,
-    ) -> list[float]:
+    ) -> dict[str, list[float]]:
         """Run the full KD training loop for ``self.num_train_epochs`` epochs.
 
         Requires ``self.train_loader`` and ``self.optimizer`` to be set at
@@ -279,7 +302,9 @@ class YOLOLogitsDistiller:
                 each ``train_step`` call.
 
         Returns:
-            A list of ``total_loss`` values, one per batch across all epochs.
+            A dict with keys ``"total_loss"``, ``"top1_acc"``, and
+            ``"top5_acc"``, each mapping to a list of per-batch values
+            recorded across all epochs.
         """
         if self.train_loader is None:
             raise ValueError(
@@ -293,6 +318,8 @@ class YOLOLogitsDistiller:
             )
 
         loss_history: list[float] = []
+        top1_history: list[float] = []
+        top5_history: list[float] = []
 
         for epoch in range(1, self.num_train_epochs + 1):
             num_batches = len(self.train_loader)
@@ -308,6 +335,8 @@ class YOLOLogitsDistiller:
                     task_loss_fn=task_loss_fn,
                 )
                 loss_history.append(output.total_loss)
+                top1_history.append(output.top1_acc)
+                top5_history.append(output.top5_acc)
 
                 if log_every > 0 and (
                     batch_idx == 1 or batch_idx % log_every == 0 or batch_idx == num_batches
@@ -315,10 +344,15 @@ class YOLOLogitsDistiller:
                     print(
                         f"  Batch {batch_idx:04d}/{num_batches} | "
                         f"total={output.total_loss:.6f} | "
-                        f"hard={output.hard_loss:.6f} | soft={output.soft_loss:.6f}"
+                        f"hard={output.hard_loss:.6f} | soft={output.soft_loss:.6f} | "
+                        f"top1={output.top1_acc:.4f} | top5={output.top5_acc:.4f}"
                     )
 
-        return loss_history
+        return {
+            "total_loss": loss_history,
+            "top1_acc": top1_history,
+            "top5_acc": top5_history,
+        }
 
 
     @torch.no_grad()
