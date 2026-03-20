@@ -38,7 +38,17 @@
   - New `_unwrap_classify_output` static method: detects the 2-element same-shaped tensor tuple and returns the second element (raw logits), passes everything else through unchanged. Applied to both teacher and student outputs in `train_step` and in the KD-loss loop inside `evaluate()` before `_flatten_logits` is called.
   - `_align_logits` rewritten as a strict shape assertion — raises `ValueError` on any mismatch instead of silently truncating, so future regressions surface immediately.
 
+## Current status (Mar 5, 2026)
+
+### Classification notebook extended with finetuned-pruned baseline and memory cleanup
+
+- **4-model comparison**: final evaluation now compares teacher, pruned (no finetune/no KD), pruned (finetuned CE-only), and distilled student.
+- **"Evaluate pruned model" cell**: `evaluate_model_on_cifar10_val` defined here; evaluates `pruned_no_kd_model` immediately after pruning and stores results in `pruned_no_kd_metrics`.
+- **"Finetune and evaluate pruned model (No Distillation)" cell**: deep-copies `pruned_no_kd_model` into `pruned_finetuned_model`, trains it for `EPOCHS` epochs with CE loss only (no teacher), evaluates into `pruned_finetuned_metrics`.
+- **Memory cleanup cell** inserted between the finetune section and the distillation section: deletes `ultra_teacher`, `student_seed_cls_model`, `mg_cls`, `pruned_no_kd_model`, `pruned_finetuned_model`, and `ft_optimizer` from globals, then calls `gc.collect()` and `torch.cuda.empty_cache()`. Metrics dicts are preserved; `teacher_cls_model` and `student_cls_model` are kept for distillation.
+- **Final summary table** widened to 45 chars and rows updated for all 4 models.
+
 ## Next step
 
-- Run the updated classification notebook end-to-end and verify meaningful accuracy differences between the three models.
+- Run the updated classification notebook end-to-end and record accuracy for all 4 models.
 - Begin BERT KD pipeline (`src/mase_kd/nlp/bert_kd.py`).
