@@ -120,11 +120,16 @@ class YOLOLogitsDistiller:
 
     @staticmethod
     def _unwrap_classify_output(output: Any) -> Any:
-        """Unwrap the ultralytics Classify head's eval-mode ``(softmax, logits)`` tuple.
+        """Unwrap a ``(tensor_a, tensor_b)`` pair and return the second element.
 
-        When the Classify head runs in eval mode it returns
-        ``(softmax_probs, raw_logits)`` — two tensors with identical shapes.
-        For distillation we only need the raw logits (the second element).
+        Some model wrappers return a 2-element tuple/list of same-shaped tensors
+        (e.g. ``(softmax_probs, raw_logits)``).  For distillation we only need
+        the raw logits (the second element).
+
+        Note: the ultralytics Classify head itself returns a *single* tensor in
+        eval mode (``x.softmax(1)``) — not a tuple.  To obtain raw logits from
+        the teacher the caller should run the teacher in train mode inside a
+        ``torch.no_grad()`` block so the Classify head returns ``x`` directly.
 
         If the output is not a 2-element tuple/list of same-shaped tensors the
         input is returned unchanged, so this is safe to call unconditionally.
@@ -220,7 +225,9 @@ class YOLOLogitsDistiller:
         student_output = self.student(images)
 
         with torch.no_grad():
+            self.teacher.train()  # train mode → Classify head returns raw logits, not softmax
             teacher_output = self.teacher(images)
+            self.teacher.eval()
 
         student_output = self._unwrap_classify_output(student_output)
         teacher_output = self._unwrap_classify_output(teacher_output)
@@ -393,14 +400,15 @@ class YOLOLogitsDistiller:
         results["student"] = _eval_model(self.student)
 
         # KD (KL-divergence) loss: teacher vs distilled student
-        self.teacher.eval()
         self.student.eval()
         total_kd_loss = 0.0
         used_batches = 0
         for images, labels in self.val_loader:
             images = images.to(self.device)
             labels = labels.to(self.device)
+            self.teacher.train()  # train mode → Classify head returns raw logits, not softmax
             teacher_outputs = self._unwrap_classify_output(self.teacher(images))
+            self.teacher.eval()
             student_outputs = self._unwrap_classify_output(self.student(images))
 
             teacher_logits = self._extract_logits_with_batch(teacher_outputs, labels.shape[0])
