@@ -20,7 +20,7 @@ The experiment is grounded in Hinton, Vinyals & Dean (2015) *"Distilling the Kno
 | Dataset | CIFAR10 (50 000 train / 10 000 val) |
 | Image size | 32 × 32 (native CIFAR10, no resize) |
 | Metric | Top-1 accuracy on full val set |
-| Batch size | 64 |
+| Batch size | 128 |
 | Seed | 42 (fixed for all runs) |
 
 ---
@@ -85,21 +85,27 @@ For each `(model pair, alpha, temperature)` combination, four models are evaluat
 
 ## Training Protocol
 
-```
-YOLOLogitsDistiller(
-    teacher       = teacher_cls_model,   # frozen; forward in train() mode inside no_grad → raw logits
-    student       = student_cls_model,   # pruned student
-    kd_config     = DistillationLossConfig(alpha=ALPHA, temperature=TEMP),
-    device        = "cuda",
-    train_loader  = train_loader,
-    optimizer     = Adam(student.parameters(), lr=LR),
+```python
+distiller = YOLOLogitsDistiller(
+    teacher          = teacher_cls_model,   # frozen; forward in train() mode inside no_grad → raw logits
+    student          = student_cls_model,   # pruned student
+    kd_config        = DistillationLossConfig(alpha=ALPHA, temperature=TEMP),
+    device           = "cuda",
+    train_loader     = train_loader,
+    optimizer        = Adam(student.parameters(), lr=LR),
     num_train_epochs = EPOCHS,
-    val_loader    = val_loader,
-    eval_teacher  = True,
+    val_loader       = val_loader,
+    eval_teacher     = True,
 )
-distiller.train()
+train_history = distiller.train(save_path=KD_SAVE_PATH)   # saves best epoch checkpoint
+# Restore best weights before evaluation (strict=False — pruning masks held in model, not state_dict)
+student_cls_model.load_state_dict(torch.load(KD_SAVE_PATH), strict=False)
 metrics = distiller.evaluate()
 ```
+
+**Best-epoch checkpointing** (`save_path` parameter, added Mar 20 2026): `train()` evaluates val top-1 accuracy at the end of every epoch and saves `student.state_dict()` to `save_path` whenever the score improves. After training the caller restores the best weights via `load_state_dict(..., strict=False)` — `strict=False` is required because MASE's pruning pass registers sparsity masks as non-persistent buffers that are excluded from `state_dict()` on save but are already held by the model instance.
+
+The CE-only baseline uses the same per-epoch pattern with `PRUNED_FINETUNED_SAVE_PATH`.
 
 The combined loss follows Hinton et al. (2015) exactly:
 
@@ -174,18 +180,44 @@ Previously truncated teacher/student logits silently when dimensions mismatched.
 
 ---
 
+## Progress Status (Mar 20, 2026)
+
+**P3 experiment notebooks fully generated and updated with best-model checkpointing.** Instead of parameterising a single notebook, 26 standalone notebooks were generated via `cw/YOLO_logitKD_experiments/generate_notebooks.py`:
+
+| Notebook | Description |
+|----------|-------------|
+| `exp_00_P3_baseline_CE.ipynb` | CE-only fine-tuning baseline (α=0) |
+| `exp_01_P3_a0.3_T1.0.ipynb` – `exp_05_P3_a0.3_T16.0.ipynb` | α=0.3 sweep (T=1.0, 2.0, 4.0, 8.0, 16.0) |
+| `exp_06_P3_a0.5_T1.0.ipynb` – `exp_10_P3_a0.5_T16.0.ipynb` | α=0.5 sweep |
+| `exp_11_P3_a0.7_T1.0.ipynb` – `exp_15_P3_a0.7_T16.0.ipynb` | α=0.7 sweep |
+| `exp_16_P3_a0.9_T1.0.ipynb` – `exp_20_P3_a0.9_T16.0.ipynb` | α=0.9 sweep |
+| `exp_21_P3_a1.0_T1.0.ipynb` – `exp_25_P3_a1.0_T16.0.ipynb` | α=1.0 sweep (pure soft targets) |
+
+All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/results.csv`. Each notebook appends one result row to the CSV after training.
+
+**Best-model checkpointing added (Mar 20 2026):** Every notebook saves and restores the best-epoch weights:
+- `exp_00`: CE finetune loop evaluates val top-1 after each epoch; checkpoint saved to `data/best_pruned_finetuned_exp_00.pt`; best weights restored via `load_state_dict(..., strict=False)` before final evaluation.
+- `exp_01`–`exp_25`: `distiller.train(save_path=KD_SAVE_PATH)` saves best student per epoch to `data/best_student_exp_NN.pt`; best weights restored before `distiller.evaluate()`.
+
+**Actual batch size used: 128** (differs from table above which reflected an earlier draft).
+
+---
+
 ## Implementation Checklist
 
-- [ ] Verify teacher checkpoints exist for all three model pairs
-- [ ] Confirm `yolov8x-cls` and `yolov8m-cls` CIFAR10 fine-tuning is complete
-- [ ] Parameterise `cw/yolo_pruning_distillation_cls_5.ipynb` to accept `(alpha, temp, lr)` from a config cell
+- [x] Verify P3 teacher checkpoints exist (`yolov8x-cls` and `yolov8m-cls` CIFAR10 fine-tuned weights confirmed)
+- [x] Confirm `yolov8x-cls` and `yolov8m-cls` CIFAR10 fine-tuning is complete
+- [x] Generate 26 individual notebooks in `cw/YOLO_logitKD_experiments/` covering full P3 α×T grid (replaced single-notebook parameterisation)
+- [x] Add a result-logging cell that appends one row to `results.csv` after each run
+- [x] Add per-epoch best-model checkpointing (`save_path` in `distiller.train()`; `strict=False` restore after training)
+- [ ] Verify P1 and P2 teacher checkpoints exist (`yolov8n-cls`, `yolov8m-cls`)
 - [ ] Validate T=1.0 run produces the same result as nearly-hard-label CE (sanity check)
 - [ ] Validate α=1.0 run trains without CE term (confirm `compute_distillation_loss` handles `targets=None` gracefully when α=1.0)
-- [ ] Add a result-logging cell that appends one row to a CSV after each run
-- [ ] Run P2 primary sweep (25 configs) and record results
+- [ ] Run P3 primary sweep (26 notebooks) and record results
+- [ ] Run P2 primary sweep (25 configs + baseline) and record results
 - [ ] Run P1 and P3 baseline (CE-only) + best config from P2
 - [ ] Run P2 secondary LR sweep (`5e-5`, `1e-4`, `3e-4`) with best `(alpha, temperature)`
-- [ ] Plot 5×5 heatmap of top-1 KD gain vs alpha and temperature (P2)
+- [ ] Plot 5×5 heatmap of top-1 KD gain vs alpha and temperature (P3)
 - [ ] Plot KD gain vs capacity gap (P1/P2/P3) at the best config
 - [ ] Report final summary table
 

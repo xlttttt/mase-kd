@@ -289,6 +289,7 @@ class YOLOLogitsDistiller:
         self,
         log_every: int = 10,
         task_loss_fn: TaskLossFn | None = None,
+        save_path: str | None = None,
     ) -> dict[str, list[float]]:
         """Run the full KD training loop for ``self.num_train_epochs`` epochs.
 
@@ -300,6 +301,11 @@ class YOLOLogitsDistiller:
                 each epoch. Set to 0 to suppress per-batch output.
             task_loss_fn: Optional external task-loss function forwarded to
                 each ``train_step`` call.
+            save_path: If given, the student's ``state_dict`` is saved to this
+                path (via ``torch.save``) whenever the end-of-epoch metric
+                improves.  The metric is the epoch-average top-1 accuracy when
+                available, otherwise the epoch-average total loss (lower is
+                better).  Pass ``None`` (default) to disable checkpoint saving.
 
         Returns:
             A dict with keys ``"total_loss"``, ``"top1_acc"``, and
@@ -321,9 +327,17 @@ class YOLOLogitsDistiller:
         top1_history: list[float] = []
         top5_history: list[float] = []
 
+        import math
+
+        best_metric: float | None = None  # higher top1 or lower loss
+
         for epoch in range(1, self.num_train_epochs + 1):
             num_batches = len(self.train_loader)
             print(f"Epoch {epoch}/{self.num_train_epochs}")
+
+            epoch_loss: list[float] = []
+            epoch_top1: list[float] = []
+
             for batch_idx, (images, labels) in enumerate(self.train_loader, start=1):
                 batch = {
                     "images": images.to(self.device),
@@ -338,6 +352,10 @@ class YOLOLogitsDistiller:
                 top1_history.append(output.top1_acc)
                 top5_history.append(output.top5_acc)
 
+                epoch_loss.append(output.total_loss)
+                if not math.isnan(output.top1_acc):
+                    epoch_top1.append(output.top1_acc)
+
                 if log_every > 0 and (
                     batch_idx == 1 or batch_idx % log_every == 0 or batch_idx == num_batches
                 ):
@@ -346,6 +364,25 @@ class YOLOLogitsDistiller:
                         f"total={output.total_loss:.6f} | "
                         f"hard={output.hard_loss:.6f} | soft={output.soft_loss:.6f} | "
                         f"top1={output.top1_acc:.4f} | top5={output.top5_acc:.4f}"
+                    )
+
+            # Determine epoch-level metric and save best checkpoint.
+            if save_path is not None:
+                use_acc = bool(epoch_top1)
+                if use_acc:
+                    epoch_metric = sum(epoch_top1) / len(epoch_top1)
+                    is_best = best_metric is None or epoch_metric > best_metric
+                else:
+                    epoch_metric = sum(epoch_loss) / len(epoch_loss)
+                    is_best = best_metric is None or epoch_metric < best_metric
+
+                if is_best:
+                    best_metric = epoch_metric
+                    torch.save(self.student.state_dict(), save_path)
+                    metric_name = "top1" if use_acc else "loss"
+                    print(
+                        f"  [checkpoint] New best {metric_name}={epoch_metric:.6f} "
+                        f"— student saved to '{save_path}'"
                     )
 
         return {

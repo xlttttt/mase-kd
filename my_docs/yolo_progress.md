@@ -70,7 +70,23 @@ Two distinct bugs identified:
 - **Fix**: teacher is now temporarily switched to `train()` inside a `torch.no_grad()` block for each forward call (in both `train_step` and the KD-loss loop in `evaluate()`), then immediately restored to `eval()`. This makes the Classify head return raw logits without computing or accumulating any gradients.
 - `_unwrap_classify_output` docstring corrected to reflect actual ultralytics behaviour and document the train-mode pattern.
 
+## Current status (Mar 20, 2026) — continued
+
+### Best-model checkpointing in `YOLOLogitsDistiller.train()` and notebook
+
+**`src/mase_kd/vision/yolo_kd.py`**
+- `train()` now accepts an optional `save_path: str | None = None` parameter.
+- At the end of each epoch the method computes an epoch-level metric: epoch-average top-1 accuracy when targets are available, otherwise epoch-average total loss (lower is better).
+- When the metric improves over all previous epochs, `self.student.state_dict()` is saved to `save_path` via `torch.save` and a `[checkpoint]` line is printed.
+- Fully backwards-compatible: default `save_path=None` disables checkpointing, matching previous behaviour.
+
+**`cw/yolo_pruning_distillation_cls_5.ipynb`**
+- Config cell: added `PRUNED_FINETUNED_SAVE_PATH = "data/best_pruned_finetuned_5.pt"` and `KD_SAVE_PATH = "data/best_student_5.pt"` alongside other hyperparameters.
+- Finetune cell: saves best checkpoint per epoch to `PRUNED_FINETUNED_SAVE_PATH`; after the loop restores best weights via `load_state_dict(..., strict=False)` before evaluation.
+- KD distiller cell: passes `save_path=KD_SAVE_PATH` to `distiller_cls.train()`; after training restores best student weights via `load_state_dict(..., strict=False)` so `distiller_cls.evaluate()` uses the best model.
+- `strict=False` required in both `load_state_dict` calls because MASE's pruning pass registers sparsity masks as non-persistent buffers via `torch.nn.utils.parametrize`; these are excluded from `state_dict()` on save but still expected by the model — since the model instance already holds the correct masks, only trained weight values need restoring.
+
 ## Next step
 
-- Re-run `cw/yolo_pruning_distillation_cls_5.ipynb` with `lr = 1e-4` after the double-softmax fix and record accuracy for all 4 models.
+- Re-run `cw/yolo_pruning_distillation_cls_5.ipynb` with `lr = 1e-5` and record accuracy for all 4 models (teacher / pruned-no-KD / pruned-finetuned / distilled).
 - Begin BERT KD pipeline (`src/mase_kd/nlp/bert_kd.py`).

@@ -191,6 +191,10 @@ def make_config_cell(exp_id, alpha=None, temp=None):
         '',
         'RESULTS_CSV = "YOLO_logitKD_experiments/results.csv"',
     ]
+    if alpha is None:
+        lines.append(f'PRUNED_FINETUNED_SAVE_PATH = "data/best_pruned_finetuned_{exp_id}.pt"')
+    else:
+        lines.append(f'KD_SAVE_PATH = "data/best_student_{exp_id}.pt"')
     return code("\n".join(lines))
 
 
@@ -290,10 +294,14 @@ def make_kd_cell(alpha, temp):
         "    eval_teacher=True,\n"
         ")\n"
         "\n"
-        "train_history = distiller.train()\n"
+        "train_history = distiller.train(save_path=KD_SAVE_PATH)\n"
         'loss_history = train_history["total_loss"]\n'
         'top1_history = train_history["top1_acc"]\n'
-        'top5_history = train_history["top5_acc"]'
+        'top5_history = train_history["top5_acc"]\n'
+        "\n"
+        "# Restore best student weights before evaluation\n"
+        "student_cls_model.load_state_dict(torch.load(KD_SAVE_PATH), strict=False)\n"
+        'print(f"Best student weights restored from {KD_SAVE_PATH}")'
     )
 
 
@@ -438,6 +446,7 @@ def build_baseline():
             "\n"
             "ce_loss_history = []\n"
             "ce_top1_history = []\n"
+            "best_val_top1 = 0.0\n"
             "\n"
             "for epoch in range(1, EPOCHS + 1):\n"
             "    ce_model.train()\n"
@@ -463,8 +472,17 @@ def build_baseline():
             '                  f"loss={loss.item():.6f} | top1={top1*100:.2f}%")\n'
             '    print(f"Epoch {epoch} avg loss: {epoch_loss / num_batches:.6f}")\n'
             "\n"
+            "    # Save best checkpoint per epoch\n"
+            "    epoch_val = evaluate_model(ce_model, val_loader, DEVICE)\n"
+            "    if epoch_val['top1_acc'] > best_val_top1:\n"
+            "        best_val_top1 = epoch_val['top1_acc']\n"
+            "        torch.save(ce_model.state_dict(), PRUNED_FINETUNED_SAVE_PATH)\n"
+            "        print(f\"  [checkpoint] val top1={best_val_top1*100:.2f}% \u2014 saved to {PRUNED_FINETUNED_SAVE_PATH}\")\n"
+            "\n"
+            "# Restore best weights and evaluate\n"
+            "ce_model.load_state_dict(torch.load(PRUNED_FINETUNED_SAVE_PATH), strict=False)\n"
             "ce_metrics = evaluate_model(ce_model, val_loader, DEVICE)\n"
-            "print(f\"\\nCE-only fine-tuned \u2014 top1: {ce_metrics['top1_acc']*100:.2f}%  CE: {ce_metrics['avg_ce_loss']:.4f}\")"
+            "print(f\"\\nCE-only fine-tuned (best) \u2014 top1: {ce_metrics['top1_acc']*100:.2f}%  CE: {ce_metrics['avg_ce_loss']:.4f}\")"
         ),
         md("## Evaluate teacher"),
         code(
