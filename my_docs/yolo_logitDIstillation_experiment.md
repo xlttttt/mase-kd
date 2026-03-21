@@ -53,9 +53,9 @@ In all pairs the student seed is the off-the-shelf ImageNet-pretrained `yolov8m-
 
 ### Fixed across all runs
 - Pruning sparsity: `0.50`
-- Epochs: `5`
-- Optimizer: Adam
-- LR: `1e-4` (safe post-pruning fine-tuning rate; see Known Issues)
+- Epochs: `50`
+- Optimizer: AdamW, `weight_decay=0.05`
+- LR: `5e-4`
 
 ### Primary sweep: KD hyperparameters
 
@@ -92,7 +92,7 @@ distiller = YOLOLogitsDistiller(
     kd_config        = DistillationLossConfig(alpha=ALPHA, temperature=TEMP),
     device           = "cuda",
     train_loader     = train_loader,
-    optimizer        = Adam(student.parameters(), lr=LR),
+    optimizer        = AdamW(student.parameters(), lr=LR, weight_decay=WEIGHT_DECAY),
     num_train_epochs = EPOCHS,
     val_loader       = val_loader,
     eval_teacher     = True,
@@ -226,7 +226,7 @@ The ultralytics `Classify` head returns `x.softmax(1)` in eval mode. Running `te
 ### 2 — Learning rate too high causes post-pruning collapse
 `lr = 1e-3` (default Adam LR) is suitable for training from scratch but destroys pre-trained weights over a few epochs when the model already achieves >80% accuracy.
 
-**Mitigation:** use `lr = 1e-4` as the default; include `5e-5` and `3e-4` in the secondary LR sweep.
+**Mitigation:** use `lr = 5e-4` with AdamW (`weight_decay=0.05`), matching the notebook baseline.
 
 ### 3 — `_align_logits` strict shape assertion
 Previously truncated teacher/student logits silently when dimensions mismatched. Now raises `ValueError` on any shape mismatch so regressions are caught immediately.
@@ -236,7 +236,9 @@ The `_eval_model` closure inside `YOLOLogitsDistiller.evaluate()` ran the model 
 
 **Fixed in `src/mase_kd/vision/yolo_kd.py` (Mar 21 2026):** `_eval_model` now temporarily switches the model to `train()` inside `@torch.no_grad()`, matching the teacher forward pattern in `train_step`.
 
-**Outstanding in experiment notebooks:** The standalone `evaluate_model` function used in `exp_00`–`exp_25` and `P3_grid_search.py` has the same bug — it calls `model.eval()` then `model(images)` without the train-mode trick. Reported `avg_ce_loss` for pruned and CE-only baselines will be incorrect; top-1 accuracy is fine.
+**Fixed in `P3_grid_search.py` (Mar 21 2026):** `evaluate_model` now uses the train-mode trick (switches to `model.train()` inside `torch.no_grad()` for the forward call) and also returns `top5_acc`.
+
+**Outstanding in individual experiment notebooks (`exp_00`–`exp_25`):** The standalone `evaluate_model` function in those notebooks still calls `model.eval()` then `model(images)` without the train-mode trick. Reported `avg_ce_loss` for pruned and CE-only baselines will be incorrect; top-1 accuracy is fine.
 
 ---
 
@@ -269,6 +271,14 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 - Simplified `.detach().cpu().item()` → `.item()` in `train_step`.
 - Removed redundant `.to(device)` in `train()` inner loop (already done by `train_step`).
 
+**`P3_grid_search.py` updates (Mar 21 2026):**
+- `EPOCHS` increased from `8` → `50`.
+- Optimizer changed from `Adam` to `AdamW`; `LR` set to `5e-4`; `WEIGHT_DECAY = 0.05`; both AdamW optimizers (CE and KD) now pass `weight_decay=WEIGHT_DECAY`. These values match the notebook (`yolo_pruning_distillation_cls_7.ipynb`).
+- CIFAR10 data augmentation added: `cifar_transform_train` uses `RandomCrop(32, padding=4)`, `RandomHorizontalFlip()`, `RandomRotation(15)`, `ToTensor()`, `RandomErasing(p=0.1)`; `cifar_transform_eval` uses plain `ToTensor()`. Applied to train/val datasets respectively.
+- `top5_acc` added: `evaluate_model` now tracks `correct_top5` and returns it; `teacher_top5`, `pruned_top5`, `ce_only_top5`, `kd_top5` columns added to CSV; per-experiment summary table widened with a `Top-5` column.
+- `evaluate_model` double-softmax fixed: uses `model.train()` inside `torch.no_grad()` for each forward call, matching the pattern in `YOLOLogitsDistiller`.
+- `torch.load(..., weights_only=True)` applied to both checkpoint restore calls.
+
 ---
 
 ## Implementation Checklist
@@ -283,7 +293,8 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 - [x] Add a result-logging cell that appends one row to `results.csv` after each run
 - [x] Add per-epoch best-model checkpointing (`save_path` in `distiller.train()`; `strict=False` restore after training)
 - [x] Create `P3_grid_search.py` — merged script running all 26 P3 experiments in one go
-- [ ] Fix `evaluate_model` double-softmax in experiment notebooks and `P3_grid_search.py` (Known Issue #4)
+- [x] Fix `evaluate_model` double-softmax in `P3_grid_search.py` (Known Issue #4)
+- [ ] Fix `evaluate_model` double-softmax in individual experiment notebooks `exp_00`–`exp_25` (Known Issue #4)
 - [ ] Validate T=1.0 run produces the same result as nearly-hard-label CE (sanity check)
 - [ ] Validate α=1.0 run trains without CE term (confirm `compute_distillation_loss` handles `targets=None` gracefully when α=1.0)
 - [ ] Run P3 primary sweep (26 runs via `P3_grid_search.py`) and record results

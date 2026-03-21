@@ -36,8 +36,9 @@ IMAGE_SIZE = 32
 BATCH_SIZE = 128
 
 PRUNE_SPARSITY = 0.50
-EPOCHS = 8
-LR = 1e-6
+EPOCHS = 50
+LR = 5e-4
+WEIGHT_DECAY = 0.05
 SEED = 42
 
 RESULTS_CSV = "YOLO_logitKD_experiments/results.csv"
@@ -86,7 +87,7 @@ print(f"Grid:      {len(ALPHAS)} alphas × {len(TEMPERATURES)} temps + 1 CE base
 @torch.no_grad()
 def evaluate_model(model, loader, device):
     model.eval()
-    batches = samples = correct = 0
+    batches = samples = correct = correct_top5 = 0
     total_ce = total_ms = 0.0
     for images, labels in loader:
         images, labels = images.to(device), labels.to(device)
@@ -108,9 +109,13 @@ def evaluate_model(model, loader, device):
         samples += images.shape[0]
         if logits.shape[1] > int(labels.max().item()):
             correct += int((logits.argmax(dim=1) == labels).sum().item())
+            k = min(5, logits.shape[1])
+            top_k_indices = logits.topk(k, dim=1).indices
+            correct_top5 += int((top_k_indices == labels.unsqueeze(1)).any(dim=1).sum().item())
             total_ce += hard_label_ce_loss(logits, labels).item()
     return {
         "top1_acc": correct / max(samples, 1),
+        "top5_acc": correct_top5 / max(samples, 1),
         "avg_ce_loss": total_ce / max(batches, 1),
         "avg_forward_ms": total_ms / max(batches, 1),
         "samples": samples,
@@ -130,9 +135,18 @@ def append_csv(row: dict):
 
 # ── CIFAR10 dataloaders ───────────────────────────────────────────────────────
 
-cifar_transform = transforms.Compose([transforms.ToTensor()])
-train_dataset = datasets.CIFAR10(root=DATA_ROOT, train=True, transform=cifar_transform, download=True)
-val_dataset = datasets.CIFAR10(root=DATA_ROOT, train=False, transform=cifar_transform, download=True)
+cifar_transform_train = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(15),
+    transforms.ToTensor(),
+    transforms.RandomErasing(p=0.1, scale=(0.02, 0.2)),
+])
+cifar_transform_eval = transforms.Compose([
+    transforms.ToTensor(),
+])
+train_dataset = datasets.CIFAR10(root=DATA_ROOT, train=True, transform=cifar_transform_train, download=True)
+val_dataset = datasets.CIFAR10(root=DATA_ROOT, train=False, transform=cifar_transform_eval, download=True)
 
 train_loader = DataLoader(
     train_dataset, batch_size=BATCH_SIZE, shuffle=True,
@@ -214,7 +228,7 @@ print("EXP 00 — CE-only baseline (α=0.0, no teacher)")
 print("=" * 80)
 
 ce_model = reset_student()
-ce_optimizer = torch.optim.Adam(ce_model.parameters(), lr=LR)
+ce_optimizer = torch.optim.AdamW(ce_model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 ce_save_path = str(SAVE_DIR / "best_pruned_finetuned_exp_00.pt")
 
 best_val_top1 = 0.0
@@ -245,7 +259,7 @@ for epoch in range(1, EPOCHS + 1):
         torch.save(ce_model.state_dict(), ce_save_path)
         print(f"  [checkpoint] val top1={best_val_top1*100:.2f}% — saved to {ce_save_path}")
 
-ce_model.load_state_dict(torch.load(ce_save_path), strict=False)
+ce_model.load_state_dict(torch.load(ce_save_path, weights_only=True), strict=False)
 ce_metrics = evaluate_model(ce_model, val_loader, DEVICE)
 print(f"\nCE-only fine-tuned (best) — top1: {ce_metrics['top1_acc']*100:.2f}%  CE: {ce_metrics['avg_ce_loss']:.4f}")
 
@@ -259,9 +273,13 @@ append_csv({
     "batch_size": BATCH_SIZE,
     "seed": SEED,
     "teacher_top1": round(teacher_metrics["top1_acc"] * 100, 4),
+    "teacher_top5": round(teacher_metrics["top5_acc"] * 100, 4),
     "pruned_top1": round(pruned_metrics["top1_acc"] * 100, 4),
+    "pruned_top5": round(pruned_metrics["top5_acc"] * 100, 4),
     "ce_only_top1": round(ce_metrics["top1_acc"] * 100, 4),
+    "ce_only_top5": round(ce_metrics["top5_acc"] * 100, 4),
     "kd_top1": "",
+    "kd_top5": "",
     "kd_gain_vs_ce": "",
     "teacher_ce_loss": round(teacher_metrics["avg_ce_loss"], 6),
     "pruned_ce_loss": round(pruned_metrics["avg_ce_loss"], 6),
@@ -294,7 +312,7 @@ for alpha in ALPHAS:
 
         # Fresh pruned student for this experiment
         student = reset_student()
-        optimizer = torch.optim.Adam(student.parameters(), lr=LR)
+        optimizer = torch.optim.AdamW(student.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
         kd_config = DistillationLossConfig(alpha=alpha, temperature=temp)
 
         distiller = YOLOLogitsDistiller(
@@ -312,7 +330,7 @@ for alpha in ALPHAS:
         train_history = distiller.train(save_path=kd_save_path)
 
         # Restore best student weights
-        student.load_state_dict(torch.load(kd_save_path), strict=False)
+        student.load_state_dict(torch.load(kd_save_path, weights_only=True), strict=False)
         print(f"Best student weights restored from {kd_save_path}")
 
         # Evaluate
@@ -321,13 +339,13 @@ for alpha in ALPHAS:
         s_metrics = eval_results["student"]
         val_kd_loss = eval_results["val_kd_loss"]
 
-        print(f"\n{'Model':<40} {'Top-1':>8} {'CE Loss':>10}")
-        print(f"{'─' * 40} {'─' * 8} {'─' * 10}")
+        print(f"\n{'Model':<40} {'Top-1':>8} {'Top-5':>8} {'CE Loss':>10}")
+        print(f"{'─' * 40} {'─' * 8} {'─' * 8} {'─' * 10}")
         if t_metrics:
-            print(f"{'Teacher (yolov8x-cls)':<40} {t_metrics['top1_acc']*100:>7.2f}% {t_metrics['avg_ce_loss']:>10.4f}")
-        print(f"{'Pruned (no train, 50%)':<40} {pruned_metrics['top1_acc']*100:>7.2f}% {pruned_metrics['avg_ce_loss']:>10.4f}")
-        print(f"{'CE-only (baseline)':<40} {ce_metrics['top1_acc']*100:>7.2f}% {ce_metrics['avg_ce_loss']:>10.4f}")
-        print(f"{f'Distilled (α={alpha}, T={temp})':<40} {s_metrics['top1_acc']*100:>7.2f}% {s_metrics['avg_ce_loss']:>10.4f}")
+            print(f"{'Teacher (yolov8x-cls)':<40} {t_metrics['top1_acc']*100:>7.2f}% {t_metrics['top5_acc']*100:>7.2f}% {t_metrics['avg_ce_loss']:>10.4f}")
+        print(f"{'Pruned (no train, 50%)':<40} {pruned_metrics['top1_acc']*100:>7.2f}% {pruned_metrics['top5_acc']*100:>7.2f}% {pruned_metrics['avg_ce_loss']:>10.4f}")
+        print(f"{'CE-only (baseline)':<40} {ce_metrics['top1_acc']*100:>7.2f}% {ce_metrics['top5_acc']*100:>7.2f}% {ce_metrics['avg_ce_loss']:>10.4f}")
+        print(f"{f'Distilled (α={alpha}, T={temp})':<40} {s_metrics['top1_acc']*100:>7.2f}% {s_metrics['top5_acc']*100:>7.2f}% {s_metrics['avg_ce_loss']:>10.4f}")
 
         kd_gain = round(s_metrics["top1_acc"] * 100 - ce_metrics["top1_acc"] * 100, 4)
 
@@ -341,9 +359,13 @@ for alpha in ALPHAS:
             "batch_size": BATCH_SIZE,
             "seed": SEED,
             "teacher_top1": round(t_metrics["top1_acc"] * 100, 4) if t_metrics else "",
+            "teacher_top5": round(t_metrics["top5_acc"] * 100, 4) if t_metrics else "",
             "pruned_top1": round(pruned_metrics["top1_acc"] * 100, 4),
+            "pruned_top5": round(pruned_metrics["top5_acc"] * 100, 4),
             "ce_only_top1": round(ce_metrics["top1_acc"] * 100, 4),
+            "ce_only_top5": round(ce_metrics["top5_acc"] * 100, 4),
             "kd_top1": round(s_metrics["top1_acc"] * 100, 4),
+            "kd_top5": round(s_metrics["top5_acc"] * 100, 4),
             "kd_gain_vs_ce": kd_gain,
             "teacher_ce_loss": round(t_metrics["avg_ce_loss"], 6) if t_metrics else "",
             "pruned_ce_loss": round(pruned_metrics["avg_ce_loss"], 6),
