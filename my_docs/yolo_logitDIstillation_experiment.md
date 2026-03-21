@@ -2,7 +2,7 @@
 
 ## Goal
 
-Systematically measure whether logits-based Knowledge Distillation (KD) improves a pruned YOLOv8-cls student relative to CE-only fine-tuning on CIFAR10, and identify which hyperparameter settings produce the best recovery of teacher accuracy.
+Systematically measure whether logits-based Knowledge Distillation (KD) improves a pruned YOLOv8-cls student relative to CE-only fine-tuning, and identify which hyperparameter settings produce the best recovery of teacher accuracy. The experiment is run across three datasets — CIFAR10, CIFAR100, and Tiny ImageNet — using the same teacher/student architecture pair (P3) to test whether the KD benefit is consistent across classification complexity.
 
 The experiment is grounded in Hinton, Vinyals & Dean (2015) *"Distilling the Knowledge in a Neural Network"* (the original KD paper). Key theoretical commitments taken from that paper:
 
@@ -15,27 +15,37 @@ The experiment is grounded in Hinton, Vinyals & Dean (2015) *"Distilling the Kno
 
 ## Baseline Setup
 
+Common across all pairs:
+
 | Item | Value |
 |------|-------|
-| Dataset | CIFAR10 (50 000 train / 10 000 val) |
-| Image size | 32 × 32 (native CIFAR10, no resize) |
 | Metric | Top-1 accuracy on full val set |
 | Batch size | 128 |
 | Seed | 42 (fixed for all runs) |
+
+Per-pair dataset details:
+
+| Pair | Dataset | Classes | Train size | Val size | Image size |
+|------|---------|---------|------------|----------|------------|
+| P1 | Tiny ImageNet | 200 | 100 000 | 10 000 | 64 × 64 |
+| P2 | CIFAR100 | 100 | 50 000 | 10 000 | 32 × 32 |
+| P3 | CIFAR10 | 10 | 50 000 | 10 000 | 32 × 32 |
 
 ---
 
 ## Model Pairs
 
-Three teacher/student pairs are evaluated to test whether KD gains are consistent across capacity gaps.
+Three pairs are evaluated, all using the same teacher/student architecture. The only difference across pairs is the dataset (and the corresponding teacher fine-tuning target).
 
-| Pair ID | Teacher | Student seed | Capacity gap | KD paper rationale |
-|---------|---------|--------------|--------------|--------------------|
-| P1 | `yolov8n-cls` (CIFAR10 fine-tuned) | `yolov8n-cls` (CIFAR10 fine-tuned) | None (self-distillation) | Tests regularisation effect of soft targets — Hinton et al. show self-KD still helps |
-| P2 | `yolov8m-cls` (CIFAR10 fine-tuned) | `yolov8n-cls` (CIFAR10 fine-tuned) | Medium | Primary sweep pair; moderate capacity gap where KD benefit is clearest |
-| P3 | `yolov8x-cls` (CIFAR10 fine-tuned) | `yolov8m-cls` (CIFAR10 fine-tuned) | Large | Tests whether a large gap limits knowledge transfer as noted in the paper |
+| Pair ID | Dataset | Teacher | Student seed | Capacity gap | Rationale |
+|---------|---------|---------|--------------|--------------|----------|
+| P1 | Tiny ImageNet (200 classes) | `yolov8x-cls` (ImageNet pretrained, Tiny ImageNet fine-tuned) | `yolov8m-cls` (ImageNet pretrained only) | Large | Tests KD at higher classification complexity (200 classes, 64×64 inputs) |
+| P2 | CIFAR100 (100 classes) | `yolov8x-cls` (ImageNet pretrained, CIFAR100 fine-tuned) | `yolov8m-cls` (ImageNet pretrained only) | Large | Tests KD at intermediate complexity (100 classes, 32×32 inputs) |
+| P3 | CIFAR10 (10 classes) | `yolov8x-cls` (ImageNet pretrained, CIFAR10 fine-tuned) | `yolov8m-cls` (ImageNet pretrained only) | Large | Tests KD at lowest complexity; soft targets least informative (fewest classes) |
 
-Each student seed is pruned (unstructured magnitude pruning, `sparsity=0.50`) via MaseGraph before training begins.
+In all pairs the student seed is the off-the-shelf ImageNet-pretrained `yolov8m-cls` (no dataset-specific fine-tuning), pruned (unstructured magnitude pruning, `sparsity=0.50`) via MaseGraph before training begins. Training starts directly from the pruned ImageNet weights.
+
+> **Note:** YOLOv8 `-cls` models are pretrained on ImageNet-1k. The detection variants (`yolov8n`, `yolov8x`, etc.) are pretrained on COCO — these are different model families.
 
 ---
 
@@ -54,19 +64,9 @@ Each student seed is pruned (unstructured magnitude pruning, `sparsity=0.50`) vi
 | `alpha` (soft-loss weight) | 0.3, 0.5, 0.7, **0.9, 1.0** | The paper recommends testing the pure soft-target limit (α=1.0). High α lets the model learn entirely from dark knowledge without hard-label interference. |
 | `temperature` | **1.0**, 2.0, 4.0, 8.0, **16.0** | T=1.0 is a degenerate baseline (nearly hard teacher argmax); T=16 surfaces inter-class similarity at finer granularity. For 10-class CIFAR10, the sweet spot is expected between T=4 and T=8. |
 
-> **Note:** α=1.0 runs skip the CE term entirely. α=0.0 (pure CE) is the fine-tuned baseline and is not part of this grid — it is run separately once per model pair.
+> **Note:** α=1.0 runs skip the CE term entirely. α=0.0 (pure CE) is the fine-tuned baseline and is not part of this grid — it is run separately as `exp_00`.
 
-Full grid: 5 × 5 = **25 configurations per model pair** (75 runs total for P1–P3).
-
-### Secondary sweep: learning rate sensitivity (P2 only)
-
-| LR | Rationale |
-|----|-----------|
-| `5e-5` | Conservative |
-| `1e-4` | Default recommendation |
-| `3e-4` | Aggressive upper bound |
-
-Run with the best `(alpha, temperature)` from the primary sweep.
+Full grid: 5 × 5 = **25 KD configurations + 1 CE baseline = 26 runs per pair × 3 pairs = 78 runs total**.
 
 ---
 
@@ -131,10 +131,36 @@ The CE-only baseline uses `alpha=0.0` (hard-label CE only, run once per model pa
 
 ## Expected Results Table (to be filled)
 
-One row per `(pair, alpha, temperature)` configuration. CE-only (α=0) is listed once per pair as a fixed baseline.
+One row per `(pair, alpha, temperature)` configuration. CE-only (α=0) is the fixed baseline for each pair.
 
 | Pair | Alpha | Temp | Teacher | Pruned | CE-only | KD | KD gain |
-|------|-------|------|---------|--------|---------|-----|------|
+|------|-------|------|---------|--------|---------|-----|--------|
+| P1 | 0 (baseline) | — | — | — | — | — | — |
+| P1 | 0.3 | 1.0 | — | — | — | — | — |
+| P1 | 0.3 | 2.0 | — | — | — | — | — |
+| P1 | 0.3 | 4.0 | — | — | — | — | — |
+| P1 | 0.3 | 8.0 | — | — | — | — | — |
+| P1 | 0.3 | 16.0 | — | — | — | — | — |
+| P1 | 0.5 | 1.0 | — | — | — | — | — |
+| P1 | 0.5 | 2.0 | — | — | — | — | — |
+| P1 | 0.5 | 4.0 | — | — | — | — | — |
+| P1 | 0.5 | 8.0 | — | — | — | — | — |
+| P1 | 0.5 | 16.0 | — | — | — | — | — |
+| P1 | 0.7 | 1.0 | — | — | — | — | — |
+| P1 | 0.7 | 2.0 | — | — | — | — | — |
+| P1 | 0.7 | 4.0 | — | — | — | — | — |
+| P1 | 0.7 | 8.0 | — | — | — | — | — |
+| P1 | 0.7 | 16.0 | — | — | — | — | — |
+| P1 | 0.9 | 1.0 | — | — | — | — | — |
+| P1 | 0.9 | 2.0 | — | — | — | — | — |
+| P1 | 0.9 | 4.0 | — | — | — | — | — |
+| P1 | 0.9 | 8.0 | — | — | — | — | — |
+| P1 | 0.9 | 16.0 | — | — | — | — | — |
+| P1 | 1.0 | 1.0 | — | — | — | — | — |
+| P1 | 1.0 | 2.0 | — | — | — | — | — |
+| P1 | 1.0 | 4.0 | — | — | — | — | — |
+| P1 | 1.0 | 8.0 | — | — | — | — | — |
+| P1 | 1.0 | 16.0 | — | — | — | — | — |
 | P2 | 0 (baseline) | — | — | — | — | — | — |
 | P2 | 0.3 | 1.0 | — | — | — | — | — |
 | P2 | 0.3 | 2.0 | — | — | — | — | — |
@@ -147,19 +173,46 @@ One row per `(pair, alpha, temperature)` configuration. CE-only (α=0) is listed
 | P2 | 0.5 | 8.0 | — | — | — | — | — |
 | P2 | 0.5 | 16.0 | — | — | — | — | — |
 | P2 | 0.7 | 1.0 | — | — | — | — | — |
+| P2 | 0.7 | 2.0 | — | — | — | — | — |
 | P2 | 0.7 | 4.0 | — | — | — | — | — |
 | P2 | 0.7 | 8.0 | — | — | — | — | — |
 | P2 | 0.7 | 16.0 | — | — | — | — | — |
+| P2 | 0.9 | 1.0 | — | — | — | — | — |
+| P2 | 0.9 | 2.0 | — | — | — | — | — |
 | P2 | 0.9 | 4.0 | — | — | — | — | — |
 | P2 | 0.9 | 8.0 | — | — | — | — | — |
 | P2 | 0.9 | 16.0 | — | — | — | — | — |
+| P2 | 1.0 | 1.0 | — | — | — | — | — |
+| P2 | 1.0 | 2.0 | — | — | — | — | — |
 | P2 | 1.0 | 4.0 | — | — | — | — | — |
 | P2 | 1.0 | 8.0 | — | — | — | — | — |
 | P2 | 1.0 | 16.0 | — | — | — | — | — |
-| P1 | 0 (baseline) | — | — | — | — | — | — |
-| P1 | best from P2 | best from P2 | — | — | — | — | — |
 | P3 | 0 (baseline) | — | — | — | — | — | — |
-| P3 | best from P2 | best from P2 | — | — | — | — | — |
+| P3 | 0.3 | 1.0 | — | — | — | — | — |
+| P3 | 0.3 | 2.0 | — | — | — | — | — |
+| P3 | 0.3 | 4.0 | — | — | — | — | — |
+| P3 | 0.3 | 8.0 | — | — | — | — | — |
+| P3 | 0.3 | 16.0 | — | — | — | — | — |
+| P3 | 0.5 | 1.0 | — | — | — | — | — |
+| P3 | 0.5 | 2.0 | — | — | — | — | — |
+| P3 | 0.5 | 4.0 | — | — | — | — | — |
+| P3 | 0.5 | 8.0 | — | — | — | — | — |
+| P3 | 0.5 | 16.0 | — | — | — | — | — |
+| P3 | 0.7 | 1.0 | — | — | — | — | — |
+| P3 | 0.7 | 2.0 | — | — | — | — | — |
+| P3 | 0.7 | 4.0 | — | — | — | — | — |
+| P3 | 0.7 | 8.0 | — | — | — | — | — |
+| P3 | 0.7 | 16.0 | — | — | — | — | — |
+| P3 | 0.9 | 1.0 | — | — | — | — | — |
+| P3 | 0.9 | 2.0 | — | — | — | — | — |
+| P3 | 0.9 | 4.0 | — | — | — | — | — |
+| P3 | 0.9 | 8.0 | — | — | — | — | — |
+| P3 | 0.9 | 16.0 | — | — | — | — | — |
+| P3 | 1.0 | 1.0 | — | — | — | — | — |
+| P3 | 1.0 | 2.0 | — | — | — | — | — |
+| P3 | 1.0 | 4.0 | — | — | — | — | — |
+| P3 | 1.0 | 8.0 | — | — | — | — | — |
+| P3 | 1.0 | 16.0 | — | — | — | — | — |
 
 ---
 
@@ -178,9 +231,16 @@ The ultralytics `Classify` head returns `x.softmax(1)` in eval mode. Running `te
 ### 3 — `_align_logits` strict shape assertion
 Previously truncated teacher/student logits silently when dimensions mismatched. Now raises `ValueError` on any shape mismatch so regressions are caught immediately.
 
+### 4 — Double-softmax in `evaluate()` and standalone `evaluate_model` (FIXED in `yolo_kd.py`; OUTSTANDING in notebooks)
+The `_eval_model` closure inside `YOLOLogitsDistiller.evaluate()` ran the model in `eval()` mode, so the Classify head returned `x.softmax(1)` instead of raw logits. `hard_label_ce_loss` then operated on already-softmaxed values, producing incorrect CE loss numbers. **Top-1 accuracy is unaffected** (argmax is monotonic over softmax).
+
+**Fixed in `src/mase_kd/vision/yolo_kd.py` (Mar 21 2026):** `_eval_model` now temporarily switches the model to `train()` inside `@torch.no_grad()`, matching the teacher forward pattern in `train_step`.
+
+**Outstanding in experiment notebooks:** The standalone `evaluate_model` function used in `exp_00`–`exp_25` and `P3_grid_search.py` has the same bug — it calls `model.eval()` then `model(images)` without the train-mode trick. Reported `avg_ce_loss` for pruned and CE-only baselines will be incorrect; top-1 accuracy is fine.
+
 ---
 
-## Progress Status (Mar 20, 2026)
+## Progress Status (Mar 20–21, 2026)
 
 **P3 experiment notebooks fully generated and updated with best-model checkpointing.** Instead of parameterising a single notebook, 26 standalone notebooks were generated via `cw/YOLO_logitKD_experiments/generate_notebooks.py`:
 
@@ -201,24 +261,36 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 
 **Actual batch size used: 128** (differs from table above which reflected an earlier draft).
 
+**`P3_grid_search.py` added (Mar 20 2026):** A single Python script that runs all 26 P3 experiments sequentially, sharing the teacher, dataloaders, and pruned student snapshot across runs. Equivalent to running all notebooks back-to-back but more efficient (no repeated model loading / pruning). Checkpoints saved to `data/P3_grid_search/`. Run with `cd cw && python YOLO_logitKD_experiments/P3_grid_search.py`.
+
+**Code quality fixes in `yolo_kd.py` (Mar 21 2026):**
+- Moved `import math` / `import time` to top-level import block.
+- Fixed `_eval_model` double-softmax bug in `evaluate()` (see Known Issue #4).
+- Simplified `.detach().cpu().item()` → `.item()` in `train_step`.
+- Removed redundant `.to(device)` in `train()` inner loop (already done by `train_step`).
+
 ---
 
 ## Implementation Checklist
 
-- [x] Verify P3 teacher checkpoints exist (`yolov8x-cls` and `yolov8m-cls` CIFAR10 fine-tuned weights confirmed)
-- [x] Confirm `yolov8x-cls` and `yolov8m-cls` CIFAR10 fine-tuning is complete
+- [x] Verify P3 teacher checkpoint exists (`yolov8x-cls` CIFAR10 fine-tuned weights confirmed)
+- [x] Confirm `yolov8x-cls` CIFAR10 fine-tuning is complete
+- [ ] Fine-tune `yolov8x-cls` teacher on CIFAR100 and verify checkpoint (P2)
+- [ ] Fine-tune `yolov8x-cls` teacher on Tiny ImageNet and verify checkpoint (P1)
 - [x] Generate 26 individual notebooks in `cw/YOLO_logitKD_experiments/` covering full P3 α×T grid (replaced single-notebook parameterisation)
+- [ ] Generate 26 individual notebooks for P2 (CIFAR100) α×T grid
+- [ ] Generate 26 individual notebooks for P1 (Tiny ImageNet) α×T grid
 - [x] Add a result-logging cell that appends one row to `results.csv` after each run
 - [x] Add per-epoch best-model checkpointing (`save_path` in `distiller.train()`; `strict=False` restore after training)
-- [ ] Verify P1 and P2 teacher checkpoints exist (`yolov8n-cls`, `yolov8m-cls`)
+- [x] Create `P3_grid_search.py` — merged script running all 26 P3 experiments in one go
+- [ ] Fix `evaluate_model` double-softmax in experiment notebooks and `P3_grid_search.py` (Known Issue #4)
 - [ ] Validate T=1.0 run produces the same result as nearly-hard-label CE (sanity check)
 - [ ] Validate α=1.0 run trains without CE term (confirm `compute_distillation_loss` handles `targets=None` gracefully when α=1.0)
-- [ ] Run P3 primary sweep (26 notebooks) and record results
-- [ ] Run P2 primary sweep (25 configs + baseline) and record results
-- [ ] Run P1 and P3 baseline (CE-only) + best config from P2
-- [ ] Run P2 secondary LR sweep (`5e-5`, `1e-4`, `3e-4`) with best `(alpha, temperature)`
-- [ ] Plot 5×5 heatmap of top-1 KD gain vs alpha and temperature (P3)
-- [ ] Plot KD gain vs capacity gap (P1/P2/P3) at the best config
+- [ ] Run P3 primary sweep (26 runs via `P3_grid_search.py`) and record results
+- [ ] Run P2 primary sweep (26 runs, CIFAR100) and record results
+- [ ] Run P1 primary sweep (26 runs, Tiny ImageNet) and record results
+- [ ] Plot 5×5 heatmap of top-1 KD gain vs alpha and temperature (per pair)
+- [ ] Plot KD gain vs dataset complexity (P3→P2→P1) at the best (α, T) config
 - [ ] Report final summary table
 
 ---
@@ -230,5 +302,9 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 | `src/mase_kd/vision/yolo_kd.py` | `YOLOLogitsDistiller` — training and evaluation loop |
 | `src/mase_kd/core/losses.py` | `DistillationLossConfig`, `soft_logit_kl_loss`, `hard_label_ce_loss` |
 | `cw/yolo_pruning_distillation_cls_5.ipynb` | Main experiment notebook (P3 as current baseline) |
-| `cw/data/cifar10_yolov8x_cls/` | Teacher checkpoint directory |
-| `cw/data/cifar10_yolov8m_cls/` | Student seed checkpoint directory |
+| `cw/YOLO_logitKD_experiments/P3_grid_search.py` | Merged script running all 26 P3 experiments sequentially |
+| `cw/YOLO_logitKD_experiments/generate_notebooks.py` | Generator script for the 26 individual notebooks |
+| `cw/data/cifar10_yolov8x_cls/` | P3 teacher checkpoint directory (`yolov8x-cls` fine-tuned on CIFAR10) |
+| `cw/data/cifar100_yolov8x_cls/` | P2 teacher checkpoint directory (`yolov8x-cls` fine-tuned on CIFAR100) |
+| `cw/data/tinyimagenet_yolov8x_cls/` | P1 teacher checkpoint directory (`yolov8x-cls` fine-tuned on Tiny ImageNet) |
+| `yolov8m-cls.pt` (ultralytics default) | Student seed — ImageNet pretrained weights (loaded via `YOLO('yolov8m-cls.pt').model`) |

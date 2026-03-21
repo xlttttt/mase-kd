@@ -94,10 +94,13 @@ def evaluate_model(model, loader, device):
         if device == "cuda":
             torch.cuda.synchronize()
         t0 = time.perf_counter()
+        model.train()  # Classify head returns raw logits in train mode, not x.softmax(1)
         outputs = model(images)
+        model.eval()
         if device == "cuda":
             torch.cuda.synchronize()
         t1 = time.perf_counter()
+        outputs = YOLOLogitsDistiller._unwrap_classify_output(outputs)
         logits = YOLOLogitsDistiller._extract_logits_with_batch(outputs, images.shape[0])
         if logits is None or logits.numel() == 0:
             continue
@@ -162,11 +165,8 @@ print(f"Teacher — top1: {teacher_metrics['top1_acc']*100:.2f}%  CE: {teacher_m
 
 # ── Build student seed and prune ───────────────────────────────────────────────
 
-ultra_student = YOLO(STUDENT_CHECKPOINT)
 student_seed = MaseYoloClassificationModel(cfg=STUDENT_CFG, nc=nc)
 student_seed = patch_yolo(student_seed)
-student_seed.load_state_dict(ultra_student.model.state_dict())
-del ultra_student
 
 mg = MaseGraph(student_seed)
 mg, _ = passes.init_metadata_analysis_pass(mg)
