@@ -86,7 +86,22 @@ Two distinct bugs identified:
 - KD distiller cell: passes `save_path=KD_SAVE_PATH` to `distiller_cls.train()`; after training restores best student weights via `load_state_dict(..., strict=False)` so `distiller_cls.evaluate()` uses the best model.
 - `strict=False` required in both `load_state_dict` calls because MASE's pruning pass registers sparsity masks as non-persistent buffers via `torch.nn.utils.parametrize`; these are excluded from `state_dict()` on save but still expected by the model — since the model instance already holds the correct masks, only trained weight values need restoring.
 
+## Current status (Mar 21, 2026)
+
+### Code quality fixes in `src/mase_kd/vision/yolo_kd.py`
+
+- **Moved `import math` and `import time`** from inside method bodies to the top-level import block.
+- **Fixed `_eval_model` double-softmax bug**: the inner `_eval_model` closure in `evaluate()` previously ran the model in eval mode and passed the output directly to `_extract_logits_with_batch`, so the Classify head returned `x.softmax(1)` and `hard_label_ce_loss` operated on already-softmaxed values. Fixed by temporarily switching the model to train mode inside the `@torch.no_grad()` block (matching the pattern used for the teacher in `train_step`), then restoring eval mode; `_unwrap_classify_output` is now also applied before extraction.
+- **Simplified `.detach().cpu().item()` → `.item()`** in the `YOLOLogitsKDOutput` construction inside `train_step`; `.item()` already detaches, transfers to CPU, and returns a Python float so the extra calls were redundant.
+- **Removed double device-move in `train()`**: the inner loop was calling `.to(self.device)` when building the batch dict, but `train_step` was already doing the same move on the values it receives — the first `.to()` was a no-op.
+- **Removed extra blank line** between `train()` and `evaluate()`.
+
+### Outstanding issue in `cw/yolo_pruning_distillation_cls_5.ipynb`
+
+- `evaluate_model_on_cifar10_val` (cell 12) has the same double-softmax bug: it runs the model in eval mode and passes the output straight to `_extract_logits_with_batch` without the train-mode trick. Top-1 accuracy is unaffected (argmax is monotonic over softmax), but the reported `avg_ce_loss` values for `pruned_no_kd_metrics` and `pruned_finetuned_metrics` are incorrect.
+
 ## Next step
 
+- Fix `evaluate_model_on_cifar10_val` in `cw/yolo_pruning_distillation_cls_5.ipynb` to use train-mode forward + `_unwrap_classify_output`, matching the fix applied to `_eval_model` in `yolo_kd.py`.
 - Re-run `cw/yolo_pruning_distillation_cls_5.ipynb` with `lr = 1e-5` and record accuracy for all 4 models (teacher / pruned-no-KD / pruned-finetuned / distilled).
 - Begin BERT KD pipeline (`src/mase_kd/nlp/bert_kd.py`).

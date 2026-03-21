@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import math
+import time
+
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -278,9 +281,9 @@ class YOLOLogitsDistiller:
                 )
 
         return YOLOLogitsKDOutput(
-            total_loss=float(total.detach().cpu().item()),
-            hard_loss=float(hard_loss.detach().cpu().item()),
-            soft_loss=float(soft_loss.detach().cpu().item()),
+            total_loss=total.item(),
+            hard_loss=hard_loss.item(),
+            soft_loss=soft_loss.item(),
             top1_acc=top1_acc,
             top5_acc=top5_acc,
         )
@@ -326,9 +329,6 @@ class YOLOLogitsDistiller:
         loss_history: list[float] = []
         top1_history: list[float] = []
         top5_history: list[float] = []
-
-        import math
-
         best_metric: float | None = None  # higher top1 or lower loss
 
         for epoch in range(1, self.num_train_epochs + 1):
@@ -340,8 +340,8 @@ class YOLOLogitsDistiller:
 
             for batch_idx, (images, labels) in enumerate(self.train_loader, start=1):
                 batch = {
-                    "images": images.to(self.device),
-                    "targets": labels.to(self.device),
+                    "images": images,
+                    "targets": labels,
                 }
 
                 output = self.train_step(
@@ -391,7 +391,6 @@ class YOLOLogitsDistiller:
             "top5_acc": top5_history,
         }
 
-
     @torch.no_grad()
     def evaluate(self) -> dict[str, Any]:
         """Evaluate teacher (when ``eval_teacher=True``) and student on ``val_loader``.
@@ -416,8 +415,6 @@ class YOLOLogitsDistiller:
         Raises:
             ValueError: If ``val_loader`` was not supplied at construction.
         """
-        import time
-
         if self.val_loader is None:
             raise ValueError(
                 "val_loader is required for evaluate(): supply it to "
@@ -438,11 +435,14 @@ class YOLOLogitsDistiller:
                 if self.device.type == "cuda":
                     torch.cuda.synchronize()
                 t0 = time.perf_counter()
+                model.train()  # train mode → raw logits, not softmax
                 outputs = model(images)
+                model.eval()
                 if self.device.type == "cuda":
                     torch.cuda.synchronize()
                 t1 = time.perf_counter()
 
+                outputs = self._unwrap_classify_output(outputs)
                 logits = self._extract_logits_with_batch(outputs, images.shape[0])
                 if logits is None or logits.numel() == 0:
                     continue
