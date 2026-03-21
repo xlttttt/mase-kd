@@ -311,9 +311,14 @@ class YOLOLogitsDistiller:
                 better).  Pass ``None`` (default) to disable checkpoint saving.
 
         Returns:
-            A dict with keys ``"total_loss"``, ``"top1_acc"``, and
-            ``"top5_acc"``, each mapping to a list of per-batch values
-            recorded across all epochs.
+            A dict with keys:
+
+            * ``"train_total_loss"``, ``"train_top1_acc"``, ``"train_top5_acc"`` — per-batch
+              training metrics recorded across all epochs.
+            * ``"val_top1_acc"`` — per-epoch validation top-1 accuracy
+              (one value per epoch; empty list when no ``val_loader`` is set).
+            * ``"val_top5_acc"`` — per-epoch validation top-5 accuracy (same shape).
+            * ``"val_loss"`` — per-epoch validation CE loss (same shape).
         """
         if self.train_loader is None:
             raise ValueError(
@@ -326,10 +331,13 @@ class YOLOLogitsDistiller:
                 "YOLOLogitsDistiller() via the `optimizer` argument."
             )
 
-        loss_history: list[float] = []
-        top1_history: list[float] = []
-        top5_history: list[float] = []
-        best_metric: float | None = None  # higher top1 or lower loss
+        train_loss_history: list[float] = []
+        train_top1_history: list[float] = []
+        train_top5_history: list[float] = []
+        val_top1_history: list[float] = []
+        val_top5_history: list[float] = []
+        val_loss_history: list[float] = []
+        best_metric: float | None = None  # higher val_top1, train_top1, or lower loss
 
         for epoch in range(1, self.num_train_epochs + 1):
             num_batches = len(self.train_loader)
@@ -348,9 +356,9 @@ class YOLOLogitsDistiller:
                     batch=batch,
                     task_loss_fn=task_loss_fn,
                 )
-                loss_history.append(output.total_loss)
-                top1_history.append(output.top1_acc)
-                top5_history.append(output.top5_acc)
+                train_loss_history.append(output.total_loss)
+                train_top1_history.append(output.top1_acc)
+                train_top5_history.append(output.top5_acc)
 
                 epoch_loss.append(output.total_loss)
                 if not math.isnan(output.top1_acc):
@@ -366,29 +374,88 @@ class YOLOLogitsDistiller:
                         f"top1={output.top1_acc:.4f} | top5={output.top5_acc:.4f}"
                     )
 
+            # --- Per-epoch validation ---
+            epoch_val_top1: float | None = None
+            epoch_val_top5: float | None = None
+            epoch_val_loss: float | None = None
+            if self.val_loader is not None:
+                correct_val_top1 = 0
+                correct_val_top5 = 0
+                total_samples_val = 0
+                total_ce_val = 0.0
+                n_batches_val = 0
+                with torch.no_grad():
+                    for val_images, val_labels in self.val_loader:
+                        val_images = val_images.to(self.device)
+                        val_labels = val_labels.to(self.device)
+                        self.student.train()  # train mode → Classify head returns raw logits
+                        val_out = self.student(val_images)
+                        self.student.eval()
+                        val_out = self._unwrap_classify_output(val_out)
+                        val_logits = self._extract_logits_with_batch(val_out, val_images.shape[0])
+                        if val_logits is None or val_logits.numel() == 0:
+                            continue
+                        preds = val_logits.argmax(dim=1)
+                        correct_val_top1 += int((preds == val_labels).sum().item())
+                        k = min(5, val_logits.shape[1])
+                        top_k_indices = val_logits.topk(k, dim=1).indices
+                        correct_val_top5 += int(
+                            (top_k_indices == val_labels.unsqueeze(1)).any(dim=1).sum().item()
+                        )
+                        total_samples_val += val_images.shape[0]
+                        total_ce_val += hard_label_ce_loss(val_logits, val_labels).item()
+                        n_batches_val += 1
+                if total_samples_val > 0:
+                    epoch_val_top1 = correct_val_top1 / total_samples_val
+                    epoch_val_top5 = correct_val_top5 / total_samples_val
+                    epoch_val_loss = total_ce_val / max(n_batches_val, 1)
+                    print(
+                        f"  Val: top1={epoch_val_top1 * 100:.2f}% | "
+                        f"top5={epoch_val_top5 * 100:.2f}% | "
+                        f"CE_loss={epoch_val_loss:.6f}"
+                    )
+
+            val_top1_history.append(
+                epoch_val_top1 if epoch_val_top1 is not None else float("nan")
+            )
+            val_top5_history.append(
+                epoch_val_top5 if epoch_val_top5 is not None else float("nan")
+            )
+            val_loss_history.append(
+                epoch_val_loss if epoch_val_loss is not None else float("nan")
+            )
+
             # Determine epoch-level metric and save best checkpoint.
+            # Prefer validation top-1 > training top-1 > training loss.
             if save_path is not None:
-                use_acc = bool(epoch_top1)
-                if use_acc:
+                if epoch_val_top1 is not None:
+                    epoch_metric = epoch_val_top1
+                    is_best = best_metric is None or epoch_metric > best_metric
+                    metric_name = "val_top1"
+                elif epoch_top1:
                     epoch_metric = sum(epoch_top1) / len(epoch_top1)
                     is_best = best_metric is None or epoch_metric > best_metric
+                    metric_name = "train_top1"
                 else:
                     epoch_metric = sum(epoch_loss) / len(epoch_loss)
                     is_best = best_metric is None or epoch_metric < best_metric
+                    metric_name = "loss"
 
                 if is_best:
                     best_metric = epoch_metric
                     torch.save(self.student.state_dict(), save_path)
-                    metric_name = "top1" if use_acc else "loss"
                     print(
                         f"  [checkpoint] New best {metric_name}={epoch_metric:.6f} "
                         f"— student saved to '{save_path}'"
                     )
 
         return {
-            "total_loss": loss_history,
-            "top1_acc": top1_history,
-            "top5_acc": top5_history,
+            "train_total_loss": train_loss_history,
+            "train_top1_acc": train_top1_history,
+            "train_top5_acc": train_top5_history,
+            "val_top1_acc": val_top1_history,
+            "val_top5_acc": val_top5_history,
+            "val_loss": val_loss_history,
         }
 
     @torch.no_grad()
@@ -408,7 +475,7 @@ class YOLOLogitsDistiller:
             * ``"val_kd_loss"`` – average KD loss over the validation set.
             * ``"kd_batches"`` – number of batches used for the KD loss.
 
-            Each per-model metrics dict contains ``top1_acc``,
+            Each per-model metrics dict contains ``top1_acc``, ``top5_acc``,
             ``avg_ce_loss``, ``avg_forward_ms_per_batch``, ``samples``,
             and ``batches``.
 
@@ -427,6 +494,7 @@ class YOLOLogitsDistiller:
             samples = 0
             total_forward_ms = 0.0
             correct_top1 = 0
+            correct_top5 = 0
             total_ce_loss = 0.0
 
             for images, labels in self.val_loader:
@@ -455,6 +523,11 @@ class YOLOLogitsDistiller:
                 if logits.shape[1] > max_label:
                     preds = logits.argmax(dim=1)
                     correct_top1 += int((preds == labels).sum().item())
+                    k = min(5, logits.shape[1])
+                    top_k_indices = logits.topk(k, dim=1).indices
+                    correct_top5 += int(
+                        (top_k_indices == labels.unsqueeze(1)).any(dim=1).sum().item()
+                    )
                     total_ce_loss += hard_label_ce_loss(logits, labels).item()
 
             return {
@@ -462,6 +535,7 @@ class YOLOLogitsDistiller:
                 "samples": samples,
                 "avg_forward_ms_per_batch": total_forward_ms / max(batches, 1),
                 "top1_acc": correct_top1 / max(samples, 1),
+                "top5_acc": correct_top5 / max(samples, 1),
                 "avg_ce_loss": total_ce_loss / max(batches, 1),
             }
 

@@ -100,8 +100,27 @@ Two distinct bugs identified:
 
 - `evaluate_model_on_cifar10_val` (cell 12) has the same double-softmax bug: it runs the model in eval mode and passes the output straight to `_extract_logits_with_batch` without the train-mode trick. Top-1 accuracy is unaffected (argmax is monotonic over softmax), but the reported `avg_ce_loss` values for `pruned_no_kd_metrics` and `pruned_finetuned_metrics` are incorrect.
 
-## Next step
+## Current status (Mar 21, 2026) — continued
 
-- Fix `evaluate_model_on_cifar10_val` in `cw/yolo_pruning_distillation_cls_5.ipynb` to use train-mode forward + `_unwrap_classify_output`, matching the fix applied to `_eval_model` in `yolo_kd.py`.
-- Re-run `cw/yolo_pruning_distillation_cls_5.ipynb` with `lr = 1e-5` and record accuracy for all 4 models (teacher / pruned-no-KD / pruned-finetuned / distilled).
+### New notebook `cw/yolo_pruning_distillation_cls_6.ipynb` — validation-set tracking and top-5 metrics
+
+**`src/mase_kd/vision/yolo_kd.py` — `train()` now returns per-epoch validation metrics**
+- Added a `torch.no_grad()` validation loop at the end of each epoch, using the same train-mode-raw-logits trick as `train_step` and `_eval_model`.
+- Computes val top-1, val top-5, and val CE loss per epoch; appends one value per epoch to three new history lists.
+- `train()` return dict updated: training keys renamed with `train_` prefix (`train_total_loss`, `train_top1_acc`, `train_top5_acc`); validation keys added as `val_top1_acc`, `val_top5_acc`, `val_loss` (per-epoch lists, NaN-filled when no `val_loader` is set).
+- Checkpointing logic updated to prefer val top-1 → train top-1 → train loss (in that order), so the saved checkpoint is the best-generalising model rather than the best-fitting one.
+
+**`src/mase_kd/vision/yolo_kd.py` — `evaluate()` now returns `top5_acc` per model**
+- `_eval_model` closure adds `correct_top5` counter and top-k comparison; returns `top5_acc` alongside `top1_acc` in each per-model metrics dict.
+
+**`cw/yolo_pruning_distillation_cls_6.ipynb` — consistent print format and top-5 everywhere**
+- `evaluate_model_on_cifar10_val` updated to compute and return `top5_acc`; all existing callers updated.
+- Finetune cell: added `ft_val_top5_history`; per-epoch val line now reports both `top1_acc` and `top5_acc`; checkpoints on val top-1 instead of train top-1.
+- Distillation cell: extracts `val_top1_history`, `val_top5_history`, `val_loss_history` from `train_history`.
+- Evaluation cell: `_fmt_metrics` helper ensures all model prints share the same format (`top1_acc=…% | top5_acc=…% | CE_loss=… | fwd_ms/batch=… | samples=…`); summary table widened with a `Top-5 Acc` column.
+- Plotting cell: shows 4 lines per panel (finetuned train, finetuned val dashed, distilled train, distilled val dashed), making overfitting visible at a glance.
+
+## Next steps
+
+- Re-run `cw/yolo_pruning_distillation_cls_6.ipynb` with `lr = 1e-5` and record accuracy for all 4 models (teacher / student-no-training / finetuned / distilled).
 - Begin BERT KD pipeline (`src/mase_kd/nlp/bert_kd.py`).

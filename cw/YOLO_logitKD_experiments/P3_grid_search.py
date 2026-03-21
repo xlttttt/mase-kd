@@ -26,7 +26,6 @@ from ultralytics import YOLO
 
 PAIR = "P3"
 TEACHER_CHECKPOINT = "data/cifar10_yolov8x_cls/runs/yolov8x_cls_cifar10_finetune/weights/best.pt"
-STUDENT_CHECKPOINT = "data/cifar10_yolov8m_cls/runs/yolov8m_cls_cifar10_finetune/weights/best.pt"
 TEACHER_CFG = "yolov8x-cls.yaml"
 STUDENT_CFG = "yolov8m-cls.yaml"
 
@@ -188,7 +187,7 @@ pruned_model = mg.model.to(DEVICE)
 pruned_snapshot_state = copy.deepcopy(pruned_model.state_dict())
 del mg, student_seed, trace_input, dummy_in
 
-print(f"Student loaded: {STUDENT_CHECKPOINT}")
+print(f"Student loaded")
 print(f"Pruning complete ({PRUNE_SPARSITY*100:.0f}% sparsity)")
 
 # Evaluate pruned model (once — same for all experiments)
