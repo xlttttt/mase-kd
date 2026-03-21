@@ -25,14 +25,9 @@
 │       │   ├── __init__.py
 │       │   ├── yolo_kd.py            # YOLO teacher-student KD pipeline
 │       │   └── eval.py               # mAP + efficiency evaluation
-│       ├── nlp/
-│       │   ├── __init__.py
-│       │   ├── bert_kd.py            # BERT teacher-student KD pipeline
-│       │   └── eval.py               # Accuracy/F1 + efficiency evaluation
 │       ├── runners/
 │       │   ├── __init__.py
-│       │   ├── run_vision.py         # Entry point for YOLO runs
-│       │   └── run_nlp.py            # Entry point for BERT runs
+│       │   └── run_vision.py         # Entry point for YOLO runs
 │       └── reporting/
 │           ├── __init__.py
 │           └── summarize.py          # Aggregate metrics/tables
@@ -42,8 +37,7 @@
 │   │   ├── test_kd_losses.py
 │   │   └── test_config_schema.py
 │   ├── integration/
-│   │   ├── test_vision_smoke.py
-│   │   └── test_nlp_smoke.py
+│   │   └── test_vision_smoke.py
 │   └── regression/
 │       └── test_metrics_artifacts.py
 └── my_docs/
