@@ -283,7 +283,6 @@ The `_eval_model` closure inside `YOLOLogitsDistiller.evaluate()` ran the model 
 - [x] Add per-epoch best-model checkpointing (`save_path` in `distiller.train()`; `strict=False` restore after training)
 - [x] Create `P3_grid_search.py` — merged script running all 26 P3 experiments in one go
 - [x] Fix `evaluate_model` double-softmax in `P3_grid_search.py` (Known Issue #4)
-- [ ] Fix `evaluate_model` double-softmax in `P3_grid_search.py` individual exp functions (Known Issue #4) — **individual notebooks deleted; only `P3_grid_search.py` remains and this is already fixed**
 - [ ] Validate T=1.0 run produces the same result as nearly-hard-label CE (sanity check)
 - [ ] Validate α=1.0 run trains without CE term (confirm `compute_distillation_loss` handles `targets=None` gracefully when α=1.0)
 - [ ] Run P3 primary sweep (26 runs via `P3_grid_search.py`) and record results

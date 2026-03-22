@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""P3 full grid search — runs all 26 experiments (CE baseline + 25 KD configs) in one go.
+"""P2 full grid search — runs all 26 experiments (CE baseline + 25 KD configs) for CIFAR100.
 
-Equivalent to running exp_00_P3_baseline_CE.ipynb followed by exp_01..exp_25 notebooks
+Equivalent to running exp_00_P2_baseline_CE.ipynb followed by exp_01..exp_25 notebooks
 sequentially, but shares the teacher, dataloaders, and pruning step across runs.
 
 Usage:
     cd cw
-    python3 YOLO_logitKD_experiments/P3_grid_search.py
+    python3 YOLO_logitKD_experiments/P2_grid_search.py
 """
 
 import copy
@@ -24,8 +24,8 @@ from ultralytics import YOLO
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-PAIR = "P3"
-TEACHER_CHECKPOINT = "data/cifar10_yolov8x_cls/runs/yolov8x_cls_cifar10_finetune/weights/best.pt"
+PAIR = "P2"
+TEACHER_CHECKPOINT = "data/cifar100_yolov8x_cls_adamW/runs/yolov8x_cls_cifar100_finetune/weights/best.pt"
 TEACHER_CFG = "yolov8x-cls.yaml"
 STUDENT_CFG = "yolov8m-cls.yaml"
 
@@ -41,8 +41,8 @@ LR = 5e-4
 WEIGHT_DECAY = 0.05
 SEED = 42
 
-RESULTS_CSV = "YOLO_logitKD_experiments/P3_grid_search_results.csv"
-SAVE_DIR = Path("data/P3_grid_search")
+RESULTS_CSV = "YOLO_logitKD_experiments/P2_grid_search_results.csv"
+SAVE_DIR = Path("data/P2_grid_search")
 
 ALPHAS = [0.3, 0.5, 0.7, 0.9, 1.0]
 TEMPERATURES = [1.0, 2.0, 4.0, 8.0, 16.0]
@@ -133,7 +133,7 @@ def append_csv(row: dict):
         writer.writerow(row)
 
 
-# ── CIFAR10 dataloaders ───────────────────────────────────────────────────────
+# ── CIFAR100 dataloaders ───────────────────────────────────────────────────────
 
 cifar_transform_train = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
@@ -145,8 +145,8 @@ cifar_transform_train = transforms.Compose([
 cifar_transform_eval = transforms.Compose([
     transforms.ToTensor(),
 ])
-train_dataset = datasets.CIFAR10(root=DATA_ROOT, train=True, transform=cifar_transform_train, download=True)
-val_dataset = datasets.CIFAR10(root=DATA_ROOT, train=False, transform=cifar_transform_eval, download=True)
+train_dataset = datasets.CIFAR100(root=DATA_ROOT, train=True, transform=cifar_transform_train, download=True)
+val_dataset = datasets.CIFAR100(root=DATA_ROOT, train=False, transform=cifar_transform_eval, download=True)
 
 train_loader = DataLoader(
     train_dataset, batch_size=BATCH_SIZE, shuffle=True,
@@ -162,7 +162,7 @@ print(f"Val:   {len(val_dataset)} samples, {len(val_loader)} batches")
 # ── Load teacher ───────────────────────────────────────────────────────────────
 
 ultra_teacher = YOLO(TEACHER_CHECKPOINT)
-nc = ultra_teacher.model.yaml.get("nc", 10)
+nc = ultra_teacher.model.yaml.get("nc", 100)
 
 teacher_cls_model = MaseYoloClassificationModel(cfg=TEACHER_CFG, nc=nc)
 teacher_cls_model = patch_yolo(teacher_cls_model)
@@ -385,7 +385,7 @@ for alpha in ALPHAS:
 # ══════════════════════════════════════════════════════════════════════════════
 
 print("\n" + "=" * 80)
-print("ALL 26 P3 EXPERIMENTS COMPLETE")
+print("ALL 26 P2 EXPERIMENTS COMPLETE")
 print("=" * 80)
 print(f"Results CSV: {RESULTS_CSV}")
 print(f"Checkpoints: {SAVE_DIR}/")
