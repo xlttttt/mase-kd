@@ -120,7 +120,26 @@ Two distinct bugs identified:
 - Evaluation cell: `_fmt_metrics` helper ensures all model prints share the same format (`top1_acc=…% | top5_acc=…% | CE_loss=… | fwd_ms/batch=… | samples=…`); summary table widened with a `Top-5 Acc` column.
 - Plotting cell: shows 4 lines per panel (finetuned train, finetuned val dashed, distilled train, distilled val dashed), making overfitting visible at a glance.
 
+## Current status (Mar 22, 2026)
+
+### Notebooks renamed: `cw/yolo_distillation_cls_cifar10.ipynb` and `cw/yolo_distillation_cls_cifar100.ipynb`
+
+- `cw/yolo_pruning_distillation_cls_7.ipynb` renamed to `cw/yolo_distillation_cls_cifar10.ipynb` — now the canonical CIFAR10 baseline notebook ("pruning" removed from filenames since neither notebook prunes the student).
+- `cw/yolo_pruning_distillation_cls_cifar100.ipynb` renamed to `cw/yolo_distillation_cls_cifar100.ipynb` for the same reason.
+
+### `cw/yolo_distillation_cls_cifar100.ipynb` — CIFAR100 distillation
+
+- Ported the full workflow from `cw/yolo_distillation_cls_cifar10.ipynb` to CIFAR100.
+- **Dataset**: `torchvision.datasets.CIFAR100` (50k train / 10k val, 100 classes).
+- **Teacher**: CIFAR100-fine-tuned YOLOv8x-cls loaded from `data/cifar100_yolov8x_cls_adamW/runs/yolov8x_cls_cifar100_finetune/weights/best.pt`; same two-step loading pattern (YOLO() → MaseYoloClassificationModel + patch_yolo + load_state_dict).
+- **Student**: randomly-initialised YOLOv8m-cls (`nc=100`), no pruning.
+- **Hyperparameters** match `_7.ipynb`: `EPOCHS=50`, `lr=5e-4`, `WEIGHT_DECAY=0.05`, `KD_ALPHA=0.6`, `KD_TEMPERATURE=8.0`, `BATCH_SIZE=128`.
+- **Save paths**: `data/best_student_finetuned_cifar100.pt` (CE-only finetune best) and `data/best_student_cifar100.pt` (KD best).
+- **Evaluation helper** renamed to `evaluate_model_on_cifar100_val`; all eval logic (train-mode raw-logits trick, `_unwrap_classify_output`, top-1/top-5/CE loss) identical to `_7.ipynb`.
+- **4-section structure preserved**: baseline eval → CE-only finetune → memory cleanup → KD distillation → evaluation + summary table → training/validation curves plot.
+
 ## Next steps
 
+- Run `cw/yolo_distillation_cls_cifar100.ipynb` and record accuracy for all 4 models (teacher / student-no-training / finetuned / distilled).
 - Re-run `cw/yolo_pruning_distillation_cls_6.ipynb` with `lr = 1e-5` and record accuracy for all 4 models (teacher / student-no-training / finetuned / distilled).
 - Begin BERT KD pipeline (`src/mase_kd/nlp/bert_kd.py`).

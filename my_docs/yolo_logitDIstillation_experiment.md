@@ -244,18 +244,7 @@ The `_eval_model` closure inside `YOLOLogitsDistiller.evaluate()` ran the model 
 
 ## Progress Status (Mar 20–21, 2026)
 
-**P3 experiment notebooks fully generated and updated with best-model checkpointing.** Instead of parameterising a single notebook, 26 standalone notebooks were generated via `cw/YOLO_logitKD_experiments/generate_notebooks.py`:
-
-| Notebook | Description |
-|----------|-------------|
-| `exp_00_P3_baseline_CE.ipynb` | CE-only fine-tuning baseline (α=0) |
-| `exp_01_P3_a0.3_T1.0.ipynb` – `exp_05_P3_a0.3_T16.0.ipynb` | α=0.3 sweep (T=1.0, 2.0, 4.0, 8.0, 16.0) |
-| `exp_06_P3_a0.5_T1.0.ipynb` – `exp_10_P3_a0.5_T16.0.ipynb` | α=0.5 sweep |
-| `exp_11_P3_a0.7_T1.0.ipynb` – `exp_15_P3_a0.7_T16.0.ipynb` | α=0.7 sweep |
-| `exp_16_P3_a0.9_T1.0.ipynb` – `exp_20_P3_a0.9_T16.0.ipynb` | α=0.9 sweep |
-| `exp_21_P3_a1.0_T1.0.ipynb` – `exp_25_P3_a1.0_T16.0.ipynb` | α=1.0 sweep (pure soft targets) |
-
-All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/results.csv`. Each notebook appends one result row to the CSV after training.
+**P3 grid search script (`P3_grid_search.py`) is the canonical runner.** The 26 individual experiment notebooks (`exp_00`–`exp_25`) that were previously generated via `generate_notebooks.py` have been deleted (Mar 22 2026) — `P3_grid_search.py` covers all runs more efficiently and is the single source of truth for P3 results.
 
 **Best-model checkpointing added (Mar 20 2026):** Every notebook saves and restores the best-epoch weights:
 - `exp_00`: CE finetune loop evaluates val top-1 after each epoch; checkpoint saved to `data/best_pruned_finetuned_exp_00.pt`; best weights restored via `load_state_dict(..., strict=False)` before final evaluation.
@@ -273,7 +262,7 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 
 **`P3_grid_search.py` updates (Mar 21 2026):**
 - `EPOCHS` increased from `8` → `50`.
-- Optimizer changed from `Adam` to `AdamW`; `LR` set to `5e-4`; `WEIGHT_DECAY = 0.05`; both AdamW optimizers (CE and KD) now pass `weight_decay=WEIGHT_DECAY`. These values match the notebook (`yolo_pruning_distillation_cls_7.ipynb`).
+- Optimizer changed from `Adam` to `AdamW`; `LR` set to `5e-4`; `WEIGHT_DECAY = 0.05`; both AdamW optimizers (CE and KD) now pass `weight_decay=WEIGHT_DECAY`. These values match the notebook (`yolo_distillation_cls_cifar10.ipynb`).
 - CIFAR10 data augmentation added: `cifar_transform_train` uses `RandomCrop(32, padding=4)`, `RandomHorizontalFlip()`, `RandomRotation(15)`, `ToTensor()`, `RandomErasing(p=0.1)`; `cifar_transform_eval` uses plain `ToTensor()`. Applied to train/val datasets respectively.
 - `top5_acc` added: `evaluate_model` now tracks `correct_top5` and returns it; `teacher_top5`, `pruned_top5`, `ce_only_top5`, `kd_top5` columns added to CSV; per-experiment summary table widened with a `Top-5` column.
 - `evaluate_model` double-softmax fixed: uses `model.train()` inside `torch.no_grad()` for each forward call, matching the pattern in `YOLOLogitsDistiller`.
@@ -285,16 +274,16 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 
 - [x] Verify P3 teacher checkpoint exists (`yolov8x-cls` CIFAR10 fine-tuned weights confirmed)
 - [x] Confirm `yolov8x-cls` CIFAR10 fine-tuning is complete
-- [ ] Fine-tune `yolov8x-cls` teacher on CIFAR100 and verify checkpoint (P2)
+- [x] Fine-tune `yolov8x-cls` teacher on CIFAR100 and verify checkpoint (P2) — checkpoint at `cw/data/cifar100_yolov8x_cls_adamW/runs/yolov8x_cls_cifar100_finetune/weights/best.pt`
 - [ ] Fine-tune `yolov8x-cls` teacher on Tiny ImageNet and verify checkpoint (P1)
-- [x] Generate 26 individual notebooks in `cw/YOLO_logitKD_experiments/` covering full P3 α×T grid (replaced single-notebook parameterisation)
-- [ ] Generate 26 individual notebooks for P2 (CIFAR100) α×T grid
-- [ ] Generate 26 individual notebooks for P1 (Tiny ImageNet) α×T grid
+- [x] Generate 26 individual notebooks in `cw/YOLO_logitKD_experiments/` covering full P3 α×T grid (deleted Mar 22 2026 — superseded by `P3_grid_search.py`)
+- [x] Generate 26 individual notebooks for P2 (CIFAR100) α×T grid — not needed; will use a `P2_grid_search.py` script instead
+- [x] Generate 26 individual notebooks for P1 (Tiny ImageNet) α×T grid — not needed; will use a `P1_grid_search.py` script instead
 - [x] Add a result-logging cell that appends one row to `results.csv` after each run
 - [x] Add per-epoch best-model checkpointing (`save_path` in `distiller.train()`; `strict=False` restore after training)
 - [x] Create `P3_grid_search.py` — merged script running all 26 P3 experiments in one go
 - [x] Fix `evaluate_model` double-softmax in `P3_grid_search.py` (Known Issue #4)
-- [ ] Fix `evaluate_model` double-softmax in individual experiment notebooks `exp_00`–`exp_25` (Known Issue #4)
+- [ ] Fix `evaluate_model` double-softmax in `P3_grid_search.py` individual exp functions (Known Issue #4) — **individual notebooks deleted; only `P3_grid_search.py` remains and this is already fixed**
 - [ ] Validate T=1.0 run produces the same result as nearly-hard-label CE (sanity check)
 - [ ] Validate α=1.0 run trains without CE term (confirm `compute_distillation_loss` handles `targets=None` gracefully when α=1.0)
 - [ ] Run P3 primary sweep (26 runs via `P3_grid_search.py`) and record results
@@ -312,10 +301,11 @@ All 26 notebooks are JSON-valid and share a common `cw/YOLO_logitKD_experiments/
 |------|------|
 | `src/mase_kd/vision/yolo_kd.py` | `YOLOLogitsDistiller` — training and evaluation loop |
 | `src/mase_kd/core/losses.py` | `DistillationLossConfig`, `soft_logit_kl_loss`, `hard_label_ce_loss` |
-| `cw/yolo_pruning_distillation_cls_5.ipynb` | Main experiment notebook (P3 as current baseline) |
+| `cw/yolo_distillation_cls_cifar10.ipynb` | Main experiment notebook (P3 as current baseline, no pruning) |
+| `cw/yolo_distillation_cls_cifar100.ipynb` | P2 general distillation notebook (baseline for CIFAR100 run) |
 | `cw/YOLO_logitKD_experiments/P3_grid_search.py` | Merged script running all 26 P3 experiments sequentially |
 | `cw/YOLO_logitKD_experiments/generate_notebooks.py` | Generator script for the 26 individual notebooks |
 | `cw/data/cifar10_yolov8x_cls/` | P3 teacher checkpoint directory (`yolov8x-cls` fine-tuned on CIFAR10) |
-| `cw/data/cifar100_yolov8x_cls/` | P2 teacher checkpoint directory (`yolov8x-cls` fine-tuned on CIFAR100) |
+| `cw/data/cifar100_yolov8x_cls_adamW/` | P2 teacher checkpoint directory (`yolov8x-cls` fine-tuned on CIFAR100 with AdamW) |
 | `cw/data/tinyimagenet_yolov8x_cls/` | P1 teacher checkpoint directory (`yolov8x-cls` fine-tuned on Tiny ImageNet) |
 | `yolov8m-cls.pt` (ultralytics default) | Student seed — ImageNet pretrained weights (loaded via `YOLO('yolov8m-cls.pt').model`) |
