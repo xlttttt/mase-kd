@@ -173,4 +173,8 @@ mase-trainer/
 test-trainer/
 
 # DiffLogic: tutorial files
-docs/tutorials/difflogic/data-mnist/
+docs/tutorials/difflogic/data-mnist/outputs/
+datasets/
+runs/
+/outputs/
+CLAUDE.md

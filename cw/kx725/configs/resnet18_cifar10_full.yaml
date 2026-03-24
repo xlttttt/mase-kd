@@ -1,0 +1,68 @@
+# ResNet18 / CIFAR-10 full (report-ready) configuration
+#
+# Teacher choice: Dense ResNet18 (trained in Step A) reused as teacher for D/E.
+# Rationale: No external pretrained CIFAR-10 ResNet available; using the same
+# architecture trained with full capacity (unpruned) is a principled self-KD
+# baseline that separates the structural compression effect from knowledge
+# transfer.  To use ResNet34 instead, set teacher.arch = resnet34 and provide
+# teacher.pretrained_path pointing to a pre-trained checkpoint.
+#
+# Two sparsity levels (0.5 and 0.7) are run separately:
+#   python -m mase_kd.runners.run_pipeline --model resnet18 --dataset cifar10 \
+#       --profile full --sparsity 0.5 --seed 0
+#   python -m mase_kd.runners.run_pipeline --model resnet18 --dataset cifar10 \
+#       --profile full --sparsity 0.7 --seed 0
+# Then aggregate:
+#   python experiments/scripts/aggregate_results.py \
+#       --model resnet18 --dataset cifar10 --sparsities 0.5 0.7
+profile: full
+
+model:
+  arch: resnet18
+  num_classes: 10
+  teacher_arch: resnet18  # switch to resnet34 if a pre-trained teacher is available
+
+teacher:
+  arch: resnet18
+  # pretrained_path: ""   # leave empty → use dense A-checkpoint automatically
+
+data:
+  dir: datasets/cifar10
+  num_classes: 10
+  val_split: 0.1
+  subset_size: null   # use full 50 000 training images
+
+dense_training:
+  epochs: 100           # standard CIFAR-10 training recipe
+  batch_size: 128
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  lr_schedule: cosine
+  seed: 0               # multiple seeds: pass --seed 1, --seed 2 for replication
+
+pruning:
+  sparsity: 0.5         # override via --sparsity 0.7
+
+finetune:
+  epochs: 30
+  batch_size: 128
+  learning_rate: 0.001   # 10x lower than dense LR; lr=0.01 causes catastrophic forgetting
+
+kd:
+  alpha: 0.5
+  temperature: 4.0
+  epochs: 30
+  batch_size: 128
+  learning_rate: 0.001   # same reasoning; KD soft loss amplifies early instability at higher LR
+
+kd_finetune:
+  epochs: 10
+  batch_size: 128
+  learning_rate: 0.001
+
+# Multiple seeds for statistical robustness; run once per seed value
+seeds: [0, 1, 2]
+
+output:
+  dir: cw/kx725/outputs/resnet18/cifar10
