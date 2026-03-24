@@ -316,3 +316,12 @@ This repo contains the following directories:
 If you think MASE is helpful, please [donate](https://www.buymeacoffee.com/mase_tools) for our work, we appreciate your support!
 
 <img src='./docs/imgs/bmc_qr.png' width='250'>
+
+
+## easy start
+
+cd ~
+docker ps -a      to check container's name
+docker start -ai mase     start container
+
+
