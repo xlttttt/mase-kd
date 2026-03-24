@@ -65,4 +65,4 @@ kd_finetune:
 seeds: [0, 1, 2]
 
 output:
-  dir: outputs/resnet18/cifar10
+  dir: cw/kx725/outputs/resnet18/cifar10

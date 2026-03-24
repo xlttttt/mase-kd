@@ -255,8 +255,8 @@ class TestPipelineConfigLoads:
     def test_smoke_yaml_loads(self):
         """resnet18_cifar10_smoke.yaml should parse without errors."""
         import yaml
-        repo_root = Path(__file__).resolve().parents[2]
-        config_path = repo_root / "experiments" / "configs" / "resnet18_cifar10_smoke.yaml"
+        repo_root = Path(__file__).resolve().parents[3]
+        config_path = repo_root / "cw" / "kx725" / "configs" / "resnet18_cifar10_smoke.yaml"
         if not config_path.exists():
             pytest.skip("Smoke config not found (run from repo root)")
         with config_path.open() as fp:
@@ -269,8 +269,8 @@ class TestPipelineConfigLoads:
     def test_full_yaml_loads(self):
         """resnet18_cifar10_full.yaml should parse without errors."""
         import yaml
-        repo_root = Path(__file__).resolve().parents[2]
-        config_path = repo_root / "experiments" / "configs" / "resnet18_cifar10_full.yaml"
+        repo_root = Path(__file__).resolve().parents[3]
+        config_path = repo_root / "cw" / "kx725" / "configs" / "resnet18_cifar10_full.yaml"
         if not config_path.exists():
             pytest.skip("Full config not found")
         with config_path.open() as fp:
