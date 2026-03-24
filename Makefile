@@ -48,6 +48,18 @@ build-docker:
 	fi
 
 shell:
+<<<<<<< HEAD
+	docker run -it  --gpus all --shm-size 256m \
+		--name mase \
+		--hostname mase-ubuntu2204 \
+		-w /workspace \
+		-v $(shell pwd):/workspace \
+		-v /$(USER_PREFIX)/$(shell whoami)/.gitconfig:/root/.gitconfig \
+		-v /$(USER_PREFIX)/$(shell whoami)/.ssh:/root/.ssh \
+		-v /$(USER_PREFIX)/$(shell whoami)/.mase:/root/.mase:z \
+		$(DOCKER_RUN_EXTRA_ARGS) \
+		$(img) /bin/bash
+=======
 	docker run -it --shm-size 256m \
         --hostname mase-ubuntu2204 \
         -w /workspace \
@@ -55,6 +67,7 @@ shell:
         -v /$(USER_PREFIX)/$(shell whoami)/.ssh:/root/.ssh \
         -v /$(USER_PREFIX)/$(shell whoami)/.mase:/root/.mase:z \
         $(img) /bin/bash
+>>>>>>> b6619a167f198f32a3e768af2adfe6bfbd2e08b1
 
 test-sw:
 	pytest --log-level=DEBUG --verbose \
