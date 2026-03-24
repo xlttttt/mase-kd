@@ -1,3 +1,239 @@
+# MASE-KD: Knowledge Distillation Extension for MASE
+
+> **ADLS 2026 coursework project** — knowledge distillation (KD) pipelines for
+> ResNet18/CIFAR-10, BERT/SST-2, and YOLOv8/COCO, built on top of the MASE
+> framework from Imperial College London's DeepWok Lab.
+
+---
+
+## Overview
+
+MASE-KD adds a structured A–E experimental matrix to the MASE compiler stack:
+
+```
+A — Dense baseline          (student trained from scratch, no KD)
+B — Pruned                  (L1 global magnitude pruning, no recovery)
+C — Pruned + Finetune       (CE fine-tuning of pruned model)
+D — Pruned + KD             (knowledge distillation from frozen teacher)
+E — Pruned + KD + Finetune  (fine-tune the KD checkpoint with CE)
+```
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  CLI: python -m mase_kd.runners.run_pipeline              │
+│       --model resnet18 --dataset cifar10 --sparsity 0.5   │
+└─────────────────────────────┬─────────────────────────────┘
+                              │
+         ┌──────┬─────────────┼───────────┬────────────┐
+         ▼      ▼             ▼           ▼            ▼
+       A Dense  B Prune    C Prune+FT  D Prune+KD  E KD+FT
+         │      │PrunePass    │           │            │
+         │      └─────────────┴───────────┘            │
+         │           pruned_student.pth                 │
+         └────────────────────── teacher ───────────────┘
+                    (dense A checkpoint)
+                              │
+               ExportMetricsPass → comparison_table.md
+                                    trade_off_plot.png
+```
+
+---
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+Requires Python ≥ 3.11.9. CUDA is auto-detected. PyYAML is required for
+YAML configs (`pip install pyyaml`).
+
+---
+
+## Quick Smoke Tests (validate pipeline, ~1–3 min CPU)
+
+```bash
+# ResNet18 / CIFAR-10 — runs A-E with 5 000 samples, 2/1/1/1 epochs
+python -m mase_kd.runners.run_pipeline \
+    --model resnet18 --dataset cifar10 \
+    --sparsity 0.5 --profile smoke
+
+# Output: outputs/resnet18/cifar10/sparsity_0.50/
+#   A_dense/   best_student.pth, training_history.json, metrics.json
+#   B_pruned/  pruned_student.pth, metrics.json
+#   C_ft/      best_student.pth, training_history.json, metrics.json
+#   D_kd/      best_student.pth, training_history.json, metrics.json
+#   E_kd_ft/   best_student.pth, training_history.json, metrics.json
+#   comparison_table.md, comparison_table.json, trade_off_plot.png
+```
+
+---
+
+## Full Report-Ready Experiments (ResNet18/CIFAR-10)
+
+### Two sparsity levels
+
+```bash
+# sparsity = 0.50, seed 0  (~2–4 h on a single GPU)
+python -m mase_kd.runners.run_pipeline \
+    --model resnet18 --dataset cifar10 \
+    --profile full --sparsity 0.5 --seed 0
+
+# sparsity = 0.70, seed 0
+python -m mase_kd.runners.run_pipeline \
+    --model resnet18 --dataset cifar10 \
+    --profile full --sparsity 0.7 --seed 0
+```
+
+Full config defaults (see `experiments/configs/resnet18_cifar10_full.yaml`):
+- Dense training: 100 epochs, SGD+cosine, lr=0.1
+- Finetune (C): 30 epochs, lr=0.01
+- KD (D): 30 epochs, alpha=0.5, T=4.0, lr=0.01
+- KD+FT (E): 10 epochs, lr=0.001
+
+### Aggregate results across sparsities
+
+```bash
+python experiments/scripts/aggregate_results.py \
+    --model resnet18 --dataset cifar10 \
+    --sparsities 0.5 0.7 \
+    --output-dir outputs/resnet18/cifar10
+```
+
+Generates:
+- `outputs/resnet18/cifar10/report_ready_tables/comparison_table_sparsity_0.50.md`
+- `outputs/resnet18/cifar10/report_ready_tables/comparison_table_sparsity_0.70.md`
+- `outputs/resnet18/cifar10/report_ready_tables/combined_table.md`
+- `outputs/resnet18/cifar10/figures/accuracy_vs_variant.png`
+- `outputs/resnet18/cifar10/figures/accuracy_vs_sparsity.png`
+
+### Resource requirements
+
+| Profile | GPU | Approx. time | VRAM |
+|---|---|---|---|
+| smoke (5 k samples) | optional | 1–3 min CPU | — |
+| full (50 k, 100 ep) | recommended | 2–4 h (GPU) | ~2 GB |
+| full × 3 seeds | recommended | 6–12 h (GPU) | ~2 GB |
+
+---
+
+## BERT / SST-2 Pipeline
+
+```bash
+# Standalone runs (existing)
+python3 experiments/scripts/run_bert_baseline.py --epochs 5 --output-dir outputs/bert_baseline
+python3 experiments/scripts/run_bert_kd.py --epochs 5 --output-dir outputs/bert_kd
+
+# A-E pipeline (smoke)
+python -m mase_kd.runners.run_pipeline \
+    --model bert --dataset sst2 --profile smoke --sparsity 0.5
+```
+
+## YOLO / COCO Pipeline
+
+```bash
+# Standalone runs (existing)
+python3 experiments/scripts/run_yolo_baseline.py --epochs 50 --data coco.yaml --output-dir outputs/yolo_baseline
+python3 experiments/scripts/run_yolo_kd.py --epochs 50 --data coco.yaml --output-dir outputs/yolo_kd
+
+# A-E pipeline smoke (coco8)
+python -m mase_kd.runners.run_pipeline \
+    --model yolo --dataset coco --profile smoke --sparsity 0.5
+```
+
+---
+
+## Output Directory Layout
+
+```
+outputs/resnet18/cifar10/
+└── sparsity_0.50/
+    ├── A_dense/
+    │   ├── best_student.pth
+    │   ├── training_history.json
+    │   └── metrics.json          # {accuracy, params_nonzero, params_total, sparsity}
+    ├── B_pruned/
+    │   ├── pruned_student.pth
+    │   └── metrics.json          # {accuracy, sparsity_actual, params_nonzero, ...}
+    ├── C_ft/   (same as A_dense)
+    ├── D_kd/   (same as A_dense)
+    ├── E_kd_ft/(same as A_dense)
+    ├── comparison_table.md
+    ├── comparison_table.json
+    └── trade_off_plot.png
+```
+
+---
+
+## Config Reference
+
+| Key | Smoke | Full | Description |
+|---|---|---|---|
+| `dense_training.epochs` | 2 | 100 | Dense baseline training epochs |
+| `finetune.epochs` | 1 | 30 | Pruned+FT epochs |
+| `kd.epochs` | 1 | 30 | Pruned+KD epochs |
+| `kd_finetune.epochs` | 1 | 10 | KD+FT epochs |
+| `kd.alpha` | 0.5 | 0.5 | KD soft loss weight |
+| `kd.temperature` | 4.0 | 4.0 | KD temperature |
+| `pruning.sparsity` | 0.5 | 0.5/0.7 | Global L1 pruning sparsity |
+| `data.subset_size` | 5000 | null | Training subset (null = full) |
+
+---
+
+## Running Tests
+
+```bash
+# Unit tests only (no downloads, CPU, ~10 s)
+pytest cw/unit/ -v
+
+# Integration smoke (ResNet synthetic data, ~30 s CPU)
+pytest cw/integration/test_resnet_smoke.py -v
+
+# All integration tests (may download CIFAR-10/SST-2)
+pytest cw/integration/ -v -m integration
+
+# All tests
+pytest cw/ -v
+```
+
+---
+
+## Docker Usage
+
+```bash
+# BERT KD (GPU)
+docker run --rm --gpus all --ipc=host \
+    -v /home/xukun/projects/mase-kd:/workspace \
+    -w /workspace \
+    -e TOKENIZERS_PARALLELISM=false \
+    deepwok/mase-docker-cpu:latest \
+    python3 -m mase_kd.runners.run_pipeline \
+        --model bert --dataset sst2 --profile smoke --sparsity 0.5
+
+# ResNet KD smoke (CPU container)
+docker run --rm --ipc=host \
+    -v $(pwd):/workspace -w /workspace \
+    deepwok/mase-docker-cpu:latest \
+    python3 -m mase_kd.runners.run_pipeline \
+        --model resnet18 --dataset cifar10 --profile smoke --sparsity 0.5
+```
+
+Key flags: `--ipc=host` is **required** (avoids DataLoader shared-memory crashes);
+`python3` not `python` (no symlink in image); run containers sequentially on 8 GB GPUs.
+
+---
+
+## Architecture Notes
+
+- **Teacher (ResNet)**: Dense ResNet18 trained in Step A; reused as KD teacher for D/E.
+  No external pretrained teacher required. Set `teacher.arch: resnet34` in the full
+  config if a separate larger teacher is desired.
+- **Pruning**: Global L1 unstructured (`torch.nn.utils.prune.global_unstructured`);
+  masks made permanent via `prune.remove()` before checkpointing.
+- **KD loss**: `L = (1−α)·L_hard + α·T²·KL(student‖teacher)`.
+
+---
+
 # Machine-Learning Accelerator System Exploration Tools
 
 [![Contributors][contributors-shield]][contributors-url]

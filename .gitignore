@@ -13,6 +13,7 @@ vagrant/.vagrant/
 *.pt
 /history/
 */data/
+/cw/gl425/data/
 /tb_summary/
 # *.sh
 /mase_output/
@@ -172,5 +173,13 @@ mase-trainer/
 test-trainer/
 
 # DiffLogic: tutorial files
+<<<<<<< HEAD
 docs/tutorials/difflogic/data-mnist/
 
+=======
+docs/tutorials/difflogic/data-mnist/outputs/
+datasets/
+runs/
+/outputs/
+CLAUDE.md
+>>>>>>> b6619a167f198f32a3e768af2adfe6bfbd2e08b1

@@ -1,0 +1,65 @@
+# ResNet18 / CIFAR-100 full (report-ready) configuration
+#
+# Teacher choice: Dense ResNet18 (trained in Step A) reused as teacher for D/E.
+# CIFAR-100 requires more epochs (120) because 100 classes converge more slowly
+# than CIFAR-10.  Finetune and KD steps use lr=0.001 (10x lower than dense LR)
+# to avoid catastrophic forgetting of the pruned model's recovered structure.
+#
+# Run:
+#   python -m mase_kd.runners.run_pipeline --model resnet18 --dataset cifar100 \
+#       --profile full --sparsity 0.5 --seed 0
+#   python -m mase_kd.runners.run_pipeline --model resnet18 --dataset cifar100 \
+#       --profile full --sparsity 0.7 --seed 0
+# Then aggregate:
+#   python experiments/scripts/aggregate_results.py \
+#       --model resnet18 --dataset cifar100 --sparsities 0.5 0.7
+profile: full
+
+model:
+  arch: resnet18
+  num_classes: 100
+  teacher_arch: resnet18
+
+teacher:
+  arch: resnet18
+
+data:
+  dir: datasets/cifar100
+  dataset: cifar100
+  num_classes: 100
+  val_split: 0.1
+  subset_size: null   # use full 50 000 training images
+
+dense_training:
+  epochs: 120         # CIFAR-100 converges more slowly; 120 ep is a principled choice
+  batch_size: 128
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  lr_schedule: cosine
+  seed: 0
+
+pruning:
+  sparsity: 0.5       # override via --sparsity 0.7
+
+finetune:
+  epochs: 40
+  batch_size: 128
+  learning_rate: 0.001   # 10x lower than dense LR; prevents catastrophic forgetting
+
+kd:
+  alpha: 0.5
+  temperature: 4.0
+  epochs: 40
+  batch_size: 128
+  learning_rate: 0.001   # same reasoning as finetune
+
+kd_finetune:
+  epochs: 15
+  batch_size: 128
+  learning_rate: 0.0001
+
+seeds: [0, 1, 2]
+
+output:
+  dir: cw/kx725/outputs/resnet18/cifar100

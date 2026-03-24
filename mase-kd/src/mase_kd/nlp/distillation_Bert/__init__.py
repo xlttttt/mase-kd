@@ -1,3 +1,4 @@
+<<<<<<< HEAD:mase-kd/src/mase_kd/nlp/distillation_Bert/__init__.py
 """
 Knowledge Distillation Core Module.
 Contains loss functions and mapping utilities for Teacher-Student distillation.
@@ -18,3 +19,6 @@ __all__ = [
     "KnowledgeDistillationPass",
     "generate_layer_mapping"
 ]
+=======
+"""Distillation module (reserved for future use)."""
+>>>>>>> b6619a167f198f32a3e768af2adfe6bfbd2e08b1:src/mase_kd/distillation/__init__.py
