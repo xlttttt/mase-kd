@@ -13,9 +13,9 @@ Usage (full, seed 0)::
         --sparsity 0.5 --profile full --seed 0
 
 The runner:
-1. Loads ``experiments/configs/{model}_{dataset}_{profile}.yaml``
+1. Loads ``cw/kx725/configs/{model}_{dataset}_{profile}.yaml``
 2. Applies any CLI overrides (--sparsity, --output-dir, --seed, --alpha, --temperature)
-3. Dispatches to ``ResNetPipeline``, ``BertPipeline``, or ``YoloPipeline``
+3. Dispatches to ``ResNetPipeline``
 4. Calls ``ExportMetricsPass`` to write comparison_table.{md,json} + trade_off_plot.png
 5. Prints the Markdown comparison table to stdout
 """
@@ -36,9 +36,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_pipeline")
 
-# Repo root (two levels up from this file)
+# Repo root (three levels up from src/mase_kd/runners/)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_CONFIGS_DIR = _REPO_ROOT / "experiments" / "configs"
+_CONFIGS_DIR = _REPO_ROOT / "cw" / "kx725" / "configs"
 
 
 def _load_config(model: str, dataset: str, profile: str) -> dict:
@@ -46,7 +46,7 @@ def _load_config(model: str, dataset: str, profile: str) -> dict:
     if not config_path.exists():
         raise FileNotFoundError(
             f"Config not found: {config_path}\n"
-            "Expected file: experiments/configs/{model}_{dataset}_{profile}.yaml"
+            "Expected file: cw/kx725/configs/{model}_{dataset}_{profile}.yaml"
         )
     with config_path.open() as fp:
         return yaml.safe_load(fp)
@@ -96,10 +96,10 @@ def main(argv=None) -> None:
         description="Run the A-E knowledge distillation pipeline for a single model."
     )
     parser.add_argument("--model", required=True,
-                        choices=["resnet18", "bert", "yolo"],
+                        choices=["resnet18"],
                         help="Model identifier")
     parser.add_argument("--dataset", required=True,
-                        choices=["cifar10", "cifar100", "sst2", "coco"],
+                        choices=["cifar10", "cifar100"],
                         help="Dataset identifier")
     parser.add_argument("--profile", default="smoke",
                         choices=["smoke", "full"],
@@ -132,8 +132,6 @@ def main(argv=None) -> None:
         prefix_map = {
             ("resnet18", "cifar10"):  "resnet18_cifar10",
             ("resnet18", "cifar100"): "resnet18_cifar100",
-            ("bert",     "sst2"):     "bert",
-            ("yolo",     "coco"):     "yolo",
         }
         prefix = prefix_map.get((args.model, args.dataset))
         if prefix is None:
@@ -153,7 +151,7 @@ def main(argv=None) -> None:
     # ------------------------------------------------------------------
     # Determine output directory
     # ------------------------------------------------------------------
-    out_dir = config.get("output", {}).get("dir", f"outputs/{args.model}/{args.dataset}")
+    out_dir = config.get("output", {}).get("dir", f"cw/kx725/outputs/{args.model}/{args.dataset}")
     sparsity = config.get("pruning", {}).get("sparsity", 0.5)
     logger.info("Output dir: %s | sparsity=%.2f", out_dir, sparsity)
 
@@ -169,16 +167,6 @@ def main(argv=None) -> None:
         from mase_kd.passes.pipeline import ResNetPipeline
         results = ResNetPipeline().run(config, out_dir, sparsity, device)
         primary_metric = "accuracy"
-
-    elif args.model == "bert" and args.dataset == "sst2":
-        from mase_kd.passes.pipeline import BertPipeline
-        results = BertPipeline().run(config, out_dir, sparsity, device)
-        primary_metric = "accuracy"
-
-    elif args.model == "yolo" and args.dataset == "coco":
-        from mase_kd.passes.pipeline import YoloPipeline
-        results = YoloPipeline().run(config, out_dir, sparsity, device)
-        primary_metric = "mAP50"
 
     else:
         logger.error("Unsupported combination: model=%s dataset=%s", args.model, args.dataset)
