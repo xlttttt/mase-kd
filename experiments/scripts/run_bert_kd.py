@@ -32,6 +32,8 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--output-dir", default=None)
+    p.add_argument("--use-hidden-kd", action="store_true",
+                   help="Enable TinyBERT-style hidden-state distillation")
     return p.parse_args()
 
 
@@ -82,6 +84,7 @@ def main():
         weight_decay=cfg_dict["training"]["weight_decay"],
         seed=cfg_dict["training"]["seed"],
         output_dir=cfg_dict["output"]["dir"],
+        use_hidden_kd=args.use_hidden_kd,
     )
 
     import torch
@@ -92,6 +95,7 @@ def main():
 
     best = max(history, key=lambda x: x["val_accuracy"])
     print("\n=== BERT KD Results ===")
+    print(f"Hidden KD:      {config.use_hidden_kd}")
     print(f"KD alpha:       {config.kd.alpha}")
     print(f"Temperature:    {config.kd.temperature}")
     print(f"Best epoch:     {best['epoch']}")

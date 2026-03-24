@@ -153,6 +153,8 @@ def write_figures(
     all_results: dict[float, dict],
     figures_dir: Path,
     primary_metric: str = "accuracy",
+    model_name: str = "resnet18",
+    dataset_name: str = "cifar10",
 ) -> None:
     try:
         import matplotlib
@@ -187,7 +189,7 @@ def write_figures(
     ax.set_xticks(x)
     ax.set_xticklabels([_VARIANT_LABELS[k] for k in _VARIANTS], rotation=10, ha="right")
     ax.set_ylabel(primary_metric)
-    ax.set_title(f"ResNet18 CIFAR-10 — {primary_metric} across variants by sparsity")
+    ax.set_title(f"{model_name.upper()} {dataset_name.upper()} — {primary_metric} across variants by sparsity")
     ax.legend()
     ax.set_ylim(0, 1.05)
     plt.tight_layout()
@@ -196,7 +198,9 @@ def write_figures(
     logger.info("Wrote %s", figures_dir / "accuracy_vs_variant.png")
 
     # Figure 2: recovery delta vs sparsity (line chart per variant)
-    fig, ax = plt.subplots(figsize=(8, 5))
+    linestyles = ["--", "-.", ":", "-"]
+    markers = ["s", "^", "D", "v"]
+    fig, ax = plt.subplots(figsize=(9, 5))
     for i, key in enumerate(_VARIANTS[1:], start=1):  # skip Dense (delta=0 by def)
         deltas = []
         for s in sparsities:
@@ -207,18 +211,31 @@ def write_figures(
                 deltas.append(val - dense_val)
             else:
                 deltas.append(None)
-        # Filter out None
         xs = [s for s, d in zip(sparsities, deltas) if d is not None]
         ys = [d for d in deltas if d is not None]
         if xs:
-            ax.plot(xs, ys, marker="o", label=_VARIANT_LABELS[key],
+            idx = i - 1
+            ax.plot(xs, ys,
+                    marker=markers[idx % len(markers)],
+                    linestyle=linestyles[idx % len(linestyles)],
+                    linewidth=1.8,
+                    markersize=7,
+                    label=_VARIANT_LABELS[key],
                     color=colors[i % len(colors)])
+            # Annotate final point with delta value
+            ax.annotate(f"{ys[-1]:+.4f}",
+                        xy=(xs[-1], ys[-1]),
+                        xytext=(6, 0),
+                        textcoords="offset points",
+                        fontsize=8,
+                        color=colors[i % len(colors)],
+                        va="center")
 
     ax.axhline(0, color="black", linestyle="--", linewidth=0.7, label="Dense baseline")
     ax.set_xlabel("Sparsity")
     ax.set_ylabel(f"Δ {primary_metric} vs Dense")
-    ax.set_title(f"ResNet18 CIFAR-10 — Recovery delta vs Sparsity")
-    ax.legend()
+    ax.set_title(f"{model_name.upper()} {dataset_name.upper()} — Recovery delta vs Sparsity")
+    ax.legend(loc="lower left")
     plt.tight_layout()
     fig.savefig(figures_dir / "accuracy_vs_sparsity.png", dpi=150)
     plt.close(fig)
@@ -257,7 +274,7 @@ def main(argv=None) -> None:
 
     write_per_sparsity_tables(all_results, tables_dir, args.metric)
     write_combined_table(all_results, tables_dir, args.metric)
-    write_figures(all_results, figures_dir, args.metric)
+    write_figures(all_results, figures_dir, args.metric, args.model, args.dataset)
 
     logger.info("Aggregation complete.")
     logger.info("  Tables: %s", tables_dir)

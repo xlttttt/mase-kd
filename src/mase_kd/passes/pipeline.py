@@ -377,11 +377,20 @@ class BertPipeline:
         )
 
         def _make_bert_cfg(step_dir, alpha, student_weights_path, step_d):
+            # When a local checkpoint path is given (steps C/D/E), initialise the
+            # student from that path so pruned weights are not discarded.
+            eff_student_cfg = BertStudentConfig(
+                num_hidden_layers=student_cfg.num_hidden_layers,
+                hidden_size=student_cfg.hidden_size,
+                num_attention_heads=student_cfg.num_attention_heads,
+                intermediate_size=student_cfg.intermediate_size,
+                pretrained_name=student_weights_path if student_weights_path else None,
+            )
             return BertKDConfig(
                 teacher_model_name=teacher_cfg.get(
                     "model_name", "textattack/bert-base-uncased-SST-2"
                 ),
-                student=student_cfg,
+                student=eff_student_cfg,
                 kd=DistillationLossConfig(
                     alpha=alpha,
                     temperature=kd_d.get("temperature", 4.0),
@@ -417,8 +426,19 @@ class BertPipeline:
         )
         pruned_path = b_dir / "pruned_student"
         pruned_student.save_pretrained(str(pruned_path))
+
+        # Evaluate pruned model accuracy by temporarily swapping the student
+        # in trainer_a so we can reuse its val_loader and evaluate() method.
+        # Use trainer_a.device (not the pipeline-level device) so that data and
+        # model stay on the same device even when the mock uses a different device.
+        orig_student_a = trainer_a.student
+        trainer_a.student = pruned_student.to(trainer_a.device)
+        eval_b = trainer_a.evaluate()
+        trainer_a.student = orig_student_a
+
         metrics_b = {
-            "accuracy": 0.0,  # will need eval; skip for stub
+            "accuracy": eval_b["val_accuracy"],
+            "val_accuracy": eval_b["val_accuracy"],
             "params_nonzero": prune_info["params_nonzero"],
             "params_total": prune_info["params_total"],
             "sparsity": prune_info["sparsity_actual"],
@@ -540,8 +560,17 @@ class YoloPipeline:
         )
         pruned_path = b_dir / "pruned_student.pt"
         torch.save(pruned_student.state_dict(), pruned_path)
+
+        # Evaluate pruned model by temporarily swapping runner_a's student so
+        # we can reuse its evaluate() method (saves to tmp file + runs val).
+        orig_student_a = runner_a.student
+        runner_a.student = pruned_student.to(runner_a.device)
+        eval_b = runner_a.evaluate()
+        runner_a.student = orig_student_a
+
         metrics_b = {
-            "mAP50": 0.0,
+            "mAP50": eval_b["mAP50"],
+            "mAP50_95": eval_b.get("mAP50_95", 0.0),
             "params_nonzero": prune_info["params_nonzero"],
             "params_total": prune_info["params_total"],
             "sparsity": prune_info["sparsity_actual"],

@@ -66,6 +66,9 @@ class BertKDConfig:
     weight_decay: float = 0.01
     seed: int = 42
 
+    # Hidden-state distillation (TinyBERT-style intermediate distillation)
+    use_hidden_kd: bool = False
+
     # I/O
     output_dir: str = "outputs/bert_kd"
 
@@ -229,6 +232,36 @@ class BertKDTrainer:
 
         self.history: list[dict] = []
 
+        # Optional hidden-state distillation (TinyBERT-style).
+        # Requires teacher/student layer counts to be divisible.
+        self.hidden_distill = None
+        self.layer_mapping = None
+        if config.use_hidden_kd:
+            from mase_kd.distillation.losses import HiddenDistillationLoss
+            from mase_kd.distillation.mapping import generate_layer_mapping
+
+            s_dim = config.student.hidden_size
+            t_dim = teacher.config.hidden_size
+            s_layers = config.student.num_hidden_layers
+            t_layers = teacher.config.num_hidden_layers
+            if t_layers % s_layers == 0:
+                self.hidden_distill = HiddenDistillationLoss(s_dim, t_dim).to(device)
+                self.layer_mapping = generate_layer_mapping(s_layers, t_layers)
+                # Add projection-layer parameters to the existing optimizer.
+                self.optimizer.add_param_group(
+                    {"params": list(self.hidden_distill.parameters()), "weight_decay": 0.0}
+                )
+                logger.info(
+                    "Hidden-state KD enabled: student_dim=%d → teacher_dim=%d, mapping=%s",
+                    s_dim, t_dim, self.layer_mapping,
+                )
+            else:
+                logger.warning(
+                    "use_hidden_kd=True but teacher_layers (%d) %% student_layers (%d) != 0 "
+                    "— hidden distillation disabled.",
+                    t_layers, s_layers,
+                )
+
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
@@ -245,17 +278,31 @@ class BertKDTrainer:
                 "attention_mask": batch["attention_mask"],
             }
 
-            student_out = self.student(**model_inputs)
-
-            with torch.no_grad():
-                teacher_out = self.teacher(**model_inputs)
-
-            loss, hard, soft = compute_distillation_loss(
-                student_logits=student_out.logits,
-                teacher_logits=teacher_out.logits,
-                targets=batch["labels"],
-                config=self.config.kd,
-            )
+            if self.hidden_distill is not None:
+                # Request hidden states for intermediate distillation.
+                student_out = self.student(**model_inputs, output_hidden_states=True)
+                with torch.no_grad():
+                    teacher_out = self.teacher(**model_inputs, output_hidden_states=True)
+                loss, hard, soft = compute_distillation_loss(
+                    student_logits=student_out.logits,
+                    teacher_logits=teacher_out.logits,
+                    targets=batch["labels"],
+                    config=self.config.kd,
+                )
+                # hidden_states[0] is the embedding layer; [1:] are transformer layers.
+                s_hiddens = list(student_out.hidden_states[1:])
+                t_hiddens = list(teacher_out.hidden_states[1:])
+                loss = loss + self.hidden_distill(s_hiddens, t_hiddens, self.layer_mapping)
+            else:
+                student_out = self.student(**model_inputs)
+                with torch.no_grad():
+                    teacher_out = self.teacher(**model_inputs)
+                loss, hard, soft = compute_distillation_loss(
+                    student_logits=student_out.logits,
+                    teacher_logits=teacher_out.logits,
+                    targets=batch["labels"],
+                    config=self.config.kd,
+                )
 
             self.optimizer.zero_grad()
             loss.backward()
