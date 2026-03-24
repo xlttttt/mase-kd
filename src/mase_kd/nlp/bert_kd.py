@@ -1,1 +1,0 @@
-"""BERT KD pipeline placeholder."""
