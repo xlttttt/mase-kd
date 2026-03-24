@@ -1,1 +1,1 @@
-from .yolov8 import get_yolo_detection_model, get_yolo_segmentation_model
+from .yolov8 import get_yolo_detection_model, get_yolo_segmentation_model, get_yolo_classification_model

@@ -1,5 +1,5 @@
 from chop.models.utils import register_mase_model, ModelSource, ModelTaskType
-from ultralytics.nn.tasks import DetectionModel, SegmentationModel
+from ultralytics.nn.tasks import ClassificationModel, DetectionModel, SegmentationModel
 from ultralytics import YOLO
 import ultralytics.nn.modules as unnmod
 
@@ -71,6 +71,31 @@ class MaseYoloSegmentationModel(SegmentationModel):
         return super().forward(x)
 
 
+@register_mase_model(
+    name="yolov8-classification",
+    checkpoints=[
+        "yolov8n-cls.pt",
+        "yolov8s-cls.pt",
+        "yolov8m-cls.pt",
+        "yolov8l-cls.pt",
+        "yolov8x-cls.pt",
+    ],
+    model_source=ModelSource.VISION_OTHERS,
+    task_type=ModelTaskType.VISION,
+    image_classification=True,
+    is_fx_traceable=True,
+)
+class MaseYoloClassificationModel(ClassificationModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.custom_ops = {
+            "modules": {},
+        }
+
+    def forward(self, x):
+        return self.predict(x)
+
+
 def c2f_forward(self, x):
     # patched to avoid chunk
     y = self.cv1(x)
@@ -99,6 +124,16 @@ def get_yolo_detection_model(checkpoint):
 def get_yolo_segmentation_model(checkpoint):
     assert "-seg" in checkpoint
     model = MaseYoloSegmentationModel(cfg=checkpoint.replace(".pt", ".yaml"))
+    model = patch_yolo(model)
+    if ".pt" in checkpoint:
+        umodel = YOLO(checkpoint)
+        model.load_state_dict(umodel.model.state_dict())
+    return model
+
+
+def get_yolo_classification_model(checkpoint):
+    assert "-cls" in checkpoint
+    model = MaseYoloClassificationModel(cfg=checkpoint.replace(".pt", ".yaml"))
     model = patch_yolo(model)
     if ".pt" in checkpoint:
         umodel = YOLO(checkpoint)

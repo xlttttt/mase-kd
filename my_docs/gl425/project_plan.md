@@ -5,7 +5,6 @@
 Build an automated, principled optimization workflow based on MASE by integrating **Knowledge Distillation (KD)** for:
 
 - **Vision**: YOLO (object detection)
-- **NLP**: BERT (sequence classification)
 
 The system will demonstrate optimization gains and trade-offs under practical resource limits (**8–12GB GPU**), with reproducible experiments and testing.
 
@@ -13,8 +12,8 @@ The system will demonstrate optimization gains and trade-offs under practical re
 
 ### Why this scope is feasible in one month
 
-- Keep one core optimization method (KD) across two modalities.
-- Reuse existing MASE model support for YOLO and BERT.
+- Keep one core optimization method (KD) on vision.
+- Reuse existing MASE model support for YOLO.
 - Use a **separate KD module folder** to avoid risky refactors to core source.
 - Prioritize logits-based KD first; treat advanced KD (e.g., feature KD) as stretch.
 
@@ -25,9 +24,6 @@ The system will demonstrate optimization gains and trade-offs under practical re
 	- Feed trained models into MASE for graph-level optimization/analysis/export.
 	- This keeps the project “based on MASE” while avoiding high-risk detection-training refactors.
 
-- **BERT track**:
-	- Integrate KD into the existing classification-oriented training/wrapper path.
-	- Use BERT sequence classification models and classification datasets.
 
 ## System Architecture (High Level)
 
@@ -42,7 +38,6 @@ The system will demonstrate optimization gains and trade-offs under practical re
 
 3. **Task Pipelines**
 	 - Vision pipeline (YOLO): baseline train → KD train → MASE optimization/eval.
-	 - NLP pipeline (BERT): baseline train → KD train → optional MASE optimization/eval.
 
 4. **Evaluation & Reporting Layer**
 	 - Unified metrics logger and artifact exporter (tables/plots/checkpoints).
@@ -52,7 +47,6 @@ The system will demonstrate optimization gains and trade-offs under practical re
 ### Quality metrics
 
 - **YOLO**: mAP@50 and mAP@50:95
-- **BERT classification**: Accuracy and F1
 
 ### Efficiency metrics
 
@@ -75,7 +69,6 @@ The system will demonstrate optimization gains and trade-offs under practical re
 - Implement reproducible run setup (seed, logging, artifact folders).
 - Run baseline (non-KD) training:
 	- YOLO teacher + student baselines
-	- BERT teacher + student baselines
 - Verify GPU-fit configurations for 8–12GB.
 
 **Deliverables**: baseline scripts run end-to-end; baseline metrics table v1.
@@ -84,18 +77,17 @@ The system will demonstrate optimization gains and trade-offs under practical re
 
 - Implement logits KD core (temperature + alpha).
 - Integrate KD into YOLO training flow.
-- Integrate KD into BERT classification training flow.
 - Add smoke tests for loss correctness and one-batch train step.
 
-**Deliverables**: first KD training runs on both tracks; smoke tests passing.
+**Deliverables**: first KD training runs on YOLO; smoke tests passing.
 
 ### Week 3 — Experiments and Ablations
 
-- Full baseline vs KD experiments for YOLO and BERT.
+- Full baseline vs KD experiments for YOLO.
 - Ablation studies:
 	- `alpha` sweep
 	- `temperature` sweep
-- Run MASE-side optimization/evaluation on distilled checkpoints (especially YOLO path).
+- Run MASE-side optimization/evaluation on distilled checkpoints.
 
 **Deliverables**: complete result tables, preliminary plots, ablation summary.
 
@@ -116,12 +108,6 @@ The system will demonstrate optimization gains and trade-offs under practical re
 - Use mixed precision where stable.
 - Tune image size and batch size conservatively.
 
-### NLP (BERT)
-
-- Start with `bert-base-uncased` teacher and small BERT student.
-- Use sequence length 128–256 and small batches (e.g., 4–8) with gradient accumulation.
-- Enable mixed precision when available.
-
 ## Testing and Engineering Standards
 
 ### Testing plan
@@ -130,7 +116,7 @@ The system will demonstrate optimization gains and trade-offs under practical re
 	- KD loss value/shape checks
 	- Temperature scaling and alpha mixing checks
 - Integration smoke tests:
-	- One mini training run per modality
+	- One mini YOLO training run
 - Regression checks:
 	- Ensure metrics/log artifacts are generated consistently
 
@@ -156,7 +142,7 @@ The system will demonstrate optimization gains and trade-offs under practical re
 
 ## Final Deliverables Checklist
 
-- Working automated KD workflows for YOLO and BERT.
+- Working automated KD workflow for YOLO.
 - Quantitative baseline vs KD comparisons with trade-off analysis.
 - Tests and engineering documentation.
 - Architecture diagram and final 4-page report.
