@@ -12,21 +12,23 @@
 mase-kd/
 │
 ├── cw/             # Test scripts
-│   ├── gl425/      # YOLOv8
-│   ├── kx725/      # RESNET18
-│   ├── by425/      # GPT2
-│   └── sz2125/     # BERT
+│   ├── gl425/        # YOLOv8
+│   ├── kx725/        # RESNET18
+│   ├── by425/        # GPT2
+│   └── sz2125/       # BERT
 │
-├── my_docs/        # Documentations
+├── my_docs/        # Documentations (for individuals to track progress only)
 │   ├── gl425/
 │   ├── kx725/
 │   ├── by425/
 │   └── sz2125/
 │
 ├── src/            # Source code
-│   ├── chop/       # Original mase source code
-│   ├── mase-kd/    # Distillation library
-│   │   ├── core/   # Utils for distillation pipeline (i.e. loss function)
-│   │   ├── nlp/    # Code for BERT and GPT2 distillation pipeline
-│   │   └── vision/ # Code for RESNET18 and YOLOv8 distillation pipeline
+│   ├── chop/         # Original mase source code
+│   ├── mase-kd/      # Distillation library
+│   │   ├── core/       # Utils for distillation pipeline (i.e. loss function)
+│   │   ├── nlp/        # Code for BERT and GPT2 distillation pipeline
+│   │   ├── vision/     # Code for RESNET18 and YOLOv8 distillation pipeline
+│   │   └── README.md   # Guideline on minimum usage for the kd pipeline
+
 ```
