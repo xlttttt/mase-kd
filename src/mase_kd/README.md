@@ -227,7 +227,142 @@ print(f"Dense: {results['A']['accuracy']*100:.2f}%  →  KD+FT: {results['E']['a
 
 ## BERT
 
-> _Coming soon._
+Multi-level knowledge distillation for BERT on IMDb sentiment classification, compressing a fine-tuned `bert-base-uncased` teacher into a pruned `bert-tiny` student. Four distillation strategies are explored progressively—from logits-only KD to joint logits + hidden + attention KD—plus a KD-then-fine-tune recipe.
+
+**Models used:**
+- **Student:** `prajjwal1/bert-tiny` (2 layers, hidden_dim=128, ~4.4M params)
+- **Teacher:** `textattack/bert-base-uncased-IMDB` (12 layers, hidden_dim=768, ~110M params)
+- **Dataset:** IMDb sentiment classification
+
+### Minimal usage — Notebook
+
+The full pipeline is provided in `cw/sz2125/pipeline/Bert_pipeline.ipynb`. The steps are:
+
+1. Load `bert-tiny` as a `MaseGraph` (or from a saved QAT checkpoint).
+2. Apply L1-norm unstructured pruning at 50 % sparsity via `prune_transform_pass`.
+3. Recover accuracy with one of four KD strategies (A–D).
+
+```python
+import torch
+from transformers import AutoModelForSequenceClassification
+from chop import MaseGraph
+import chop.passes as passes
+from chop.tools import get_tokenized_dataset, get_trainer
+
+# --- Constants ---
+STUDENT_CHECKPOINT = "prajjwal1/bert-tiny"
+TEACHER_CHECKPOINT = "textattack/bert-base-uncased-IMDB"
+TOKENIZER_CHECKPOINT = "bert-base-uncased"
+STUDENT_DIM, TEACHER_DIM = 128, 768
+STUDENT_LAYERS, TEACHER_LAYERS = 2, 12
+NUM_TRAIN_EPOCHS = 5
+
+# --- Student (MaseGraph) ---
+model = AutoModelForSequenceClassification.from_pretrained(STUDENT_CHECKPOINT)
+model.config.problem_type = "single_label_classification"
+mg = MaseGraph(model, hf_input_names=["input_ids", "attention_mask", "labels"])
+mg, _ = passes.init_metadata_analysis_pass(mg)
+mg, _ = passes.add_common_metadata_analysis_pass(mg)
+
+# --- Dataset ---
+dataset, tokenizer = get_tokenized_dataset(
+    dataset="imdb", checkpoint=TOKENIZER_CHECKPOINT, return_tokenizer=True,
+)
+
+# --- Pruning (50 % L1 unstructured) ---
+pruning_config = {
+    "weight":     {"sparsity": 0.5, "method": "l1-norm", "scope": "local"},
+    "activation": {"sparsity": 0.5, "method": "l1-norm", "scope": "local"},
+}
+mg, _ = passes.prune_transform_pass(mg, pass_args=pruning_config)
+
+# --- Teacher ---
+teacher_model = AutoModelForSequenceClassification.from_pretrained(TEACHER_CHECKPOINT)
+teacher_model.eval()
+
+# --- KD config (Strategy C shown; adjust weights per strategy, see table below) ---
+from mase_kd.distillation.kd_pass_attention import kd_transform_pass
+
+kd_config = {
+    "s_dim": STUDENT_DIM,       # student hidden dimension
+    "t_dim": TEACHER_DIM,       # teacher hidden dimension
+    "s_layers": STUDENT_LAYERS, # student encoder layers
+    "t_layers": TEACHER_LAYERS, # teacher encoder layers
+    "alpha_kd": 1.0,            # logits KD weight       (set 0 to disable)
+    "alpha_hidden": 0.1,        # hidden-state KD weight  (set 0 to disable)
+    "alpha_attn": 0.1,          # attention KD weight     (set 0 to disable)
+    "temperature": 2.0,         # softmax temperature
+}
+
+kd_model, info = kd_transform_pass(
+    student_graph_or_model=mg,
+    teacher_model=teacher_model,
+    config=kd_config,
+)
+
+# --- Train ---
+trainer = get_trainer(
+    model=kd_model, tokenized_dataset=dataset,
+    tokenizer=tokenizer, evaluate_metric="accuracy",
+    num_train_epochs=NUM_TRAIN_EPOCHS,
+)
+trainer.train()
+
+# --- Evaluate (unwrapped student for a fair comparison) ---
+eval_trainer = get_trainer(
+    model=mg.model, tokenized_dataset=dataset,
+    tokenizer=tokenizer, evaluate_metric="accuracy",
+)
+results = eval_trainer.evaluate()
+print(f"Accuracy: {results['eval_accuracy']}")
+
+# --- (Strategy D only) Fine-tune with hard labels after KD ---
+# torch.save(mg.model.state_dict(), "saved_models/kd_logits_only/student.pt")
+# mg.model.load_state_dict(torch.load("saved_models/kd_logits_only/student.pt"))
+# ft_trainer = get_trainer(
+#     model=mg.model, tokenized_dataset=dataset,
+#     tokenizer=tokenizer, evaluate_metric="accuracy",
+#     num_train_epochs=NUM_TRAIN_EPOCHS,
+# )
+# ft_trainer.train()
+```
+
+> **Note:** For Strategy A (logits-only with FX-traced graph compatibility), you can also use the lightweight `KnowledgeDistillationPass` wrapper directly:
+> ```python
+> from mase_kd.distillation import KnowledgeDistillationPass
+> kd_model = KnowledgeDistillationPass(
+>     student_model=mg.model, teacher_model=teacher_model,
+>     alpha_kd=1.0, temperature=3.0,
+> )
+> ```
+
+### Key API
+
+| Symbol | Description |
+|---|---|
+| `KnowledgeDistillationPass(student_model, teacher_model, alpha_kd, temperature, …)` | Logits-only KD wrapper. Freezes the teacher, computes KL-divergence on softened logits plus the student's task CE loss. |
+| `kd_transform_pass(student_graph_or_model, teacher_model, config)` | MASE-style pass that returns `(wrapped_model, info)`. The `kd_pass_hidden` variant adds hidden-state MSE loss; the `kd_pass_attention` variant adds attention-matrix MSE loss on top. |
+| `prediction_distillation_loss(s_logits, t_logits, T)` | KL-divergence loss on temperature-softened logits. Multiplied by T² to keep gradient scale consistent. |
+| `HiddenDistillationLoss(s_dim, t_dim)` | MSE loss between student and teacher hidden states, with a learnable linear projection to align dimensions. |
+| `attention_distillation_loss(s_atts, t_atts, mapping)` | MSE loss between mapped student and teacher attention matrices. |
+| `generate_layer_mapping(s_layers, t_layers)` | Uniform layer mapping (TinyBERT-style). E.g. student=2, teacher=12 → `{0: 5, 1: 11}`. |
+
+### A–D strategy matrix
+
+| Strategy | Description | Key Hyperparameters |
+|---|---|---|
+| **A** | Logits-only KD on pruned student. | `alpha_kd=1.0`, `T=3.0` |
+| **B** | Logits + hidden-state KD (linear projection aligns dim 128→768). | `alpha_kd=2.0`, `alpha_hidden=1.0`, `T=5.0` |
+| **C** | Logits + hidden + attention KD (full TinyBERT-style). | `alpha_kd=1.0`, `alpha_hidden=0.1`, `alpha_attn=0.1`, `T=2.0` |
+| **D** | Logits-only KD (Strategy A) followed by hard-label fine-tuning. | Same as A, then `alpha_kd=0` fine-tune. |
+
+### BERT-specific implementation notes
+
+- The student is FX-traced via `MaseGraph`; forward hooks on encoder `LayerNorm` and self-attention `Dropout` modules are used to extract hidden states and attention matrices without modifying the traced graph.
+- Layer mapping follows the TinyBERT uniform strategy: the teacher's layers are evenly partitioned and each partition's last layer is matched to the corresponding student layer.
+- `HiddenDistillationLoss` contains a learnable `nn.Linear(s_dim, t_dim)` projection that is trained jointly with the student during back-propagation.
+- Attention hooks use `register_forward_pre_hook` on the self-attention dropout layer to capture the clean attention-probability matrix **before** dropout is applied.
+- Strategy D decouples knowledge transfer from label fitting: the KD phase transfers the teacher's dark knowledge, and the subsequent fine-tuning phase sharpens the student on hard labels without the teacher.
 
 ---
 
