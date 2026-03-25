@@ -6,7 +6,7 @@
 
 ---
 
-## Folder Structure
+## Key Folders
 
 ```
 mase-kd/
