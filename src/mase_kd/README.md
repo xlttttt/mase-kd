@@ -233,4 +233,92 @@ print(f"Dense: {results['A']['accuracy']*100:.2f}%  →  KD+FT: {results['E']['a
 
 ## GPT-2
 
-> _Coming soon._
+Logits-based knowledge distillation for GPT-2-style sequence classification on IMDb, using a decoder-only `distilgpt2` student and a GPT-2-family teacher (`mnoukhov/gpt2-imdb-sentiment-classifier`). This track also supports a full A–E experimental pipeline (dense → prune → fine-tune / KD / KD+FT) plus a small KD hyper-parameter sweep.
+
+### Minimal usage — Python API
+
+```python
+import torch
+from mase_kd.core.losses import DistillationLossConfig
+from mase_kd.nlp.gpt2_imdb_kd import (
+    GPT2IMDbKDConfig,
+    GPT2StudentConfig,
+    build_gpt2_imdb_kd_trainer,
+)
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+cfg = GPT2IMDbKDConfig(
+    teacher_model_name="mnoukhov/gpt2-imdb-sentiment-classifier",
+    student=GPT2StudentConfig(
+        model_name="distilgpt2",
+        num_labels=2,
+    ),
+    kd=DistillationLossConfig(alpha=0.5, temperature=4.0),
+    max_seq_length=256,
+    batch_size=8,
+    learning_rate=2e-5,
+    num_epochs=2,
+    warmup_ratio=0.06,
+    weight_decay=0.01,
+    seed=42,
+    train_subset=5000,
+    test_subset=2000,
+    output_dir="outputs/gpt2_imdb_kd_full",
+)
+
+trainer = build_gpt2_imdb_kd_trainer(cfg, device=DEVICE)
+trainer.train()                  # saves best checkpoint + training history
+results = trainer.evaluate()     # {"val_loss", "val_accuracy", "val_f1"}
+print(results)
+```
+
+### Minimal usage — CLI
+
+```bash
+# Full KD run
+PYTHONPATH=src python3 -m experiments.scripts.run_gpt2_imdb_kd_best
+
+# Small KD grid search
+PYTHONPATH=src python3 -m experiments.scripts.run_gpt2_imdb_grid_search \
+    --config experiments/configs/distilgpt2_imdb_grid_search.yaml
+```
+
+Outputs include:
+- `metrics.json` for the best-config run
+- `results.json`, `results.csv`, and `best.json` for the grid search
+
+### Key API
+
+| Symbol | Description |
+|---|---|
+| `GPT2StudentConfig(model_name, num_labels)` | Lightweight config for the decoder-only student model. Defaults to `distilgpt2`. |
+| `GPT2IMDbKDConfig(...)` | Full training config: teacher/student model names, KD hyper-parameters, IMDb subset sizes, optimiser settings, output dir, and optional `student_weights_path`. |
+| `DistillationLossConfig(alpha, temperature)` | KD loss hyper-parameters. `alpha` weights the soft KL loss; `1-alpha` weights the hard CE loss. |
+| `build_gpt2_imdb_kd_trainer(cfg, device)` | Factory that wires up tokenizer, dataloaders, teacher, student, and trainer from a `GPT2IMDbKDConfig`. |
+| `GPT2IMDbKDTrainer.train()` | Runs the full training loop. Saves the best checkpoint and training history to `cfg.output_dir`. |
+| `GPT2IMDbKDTrainer.evaluate()` | Evaluates on the IMDb validation split. Returns `{"val_loss", "val_accuracy", "val_f1"}`. |
+
+### GPT-2-specific implementation notes
+
+- GPT-2 tokenizers do not define a padding token by default, so the EOS token is reused as `pad_token` for batched IMDb classification.
+- Pruning targets both `nn.Linear` and Hugging Face `Conv1D` modules; pruning only linear layers leaves much of GPT-2 effectively untouched.
+- Zero-mask preservation is used after loading pruned checkpoints so later fine-tuning / KD stages keep the same sparse structure.
+- The final teacher/student pairing is GPT-2-family to avoid tokenizer/vocabulary mismatch during teacher forward passes.
+
+### A–E experimental matrix
+
+| Step | Dir | Description |
+|---|---|---|
+| A | `A_dense/` | Train dense `distilgpt2` on IMDb with hard labels only. |
+| B | `B_pruned/` | Apply pruning to A’s checkpoint. No recovery training. |
+| C | `C_ft/` | Load B’s sparse checkpoint and fine-tune with hard labels only. |
+| D | `D_kd/` | Load B’s sparse checkpoint and distil from the GPT-2 teacher. |
+| E | `E_kd_ft/` | Load D’s best checkpoint and fine-tune again with hard labels only. |
+
+### Headline results
+
+The GPT-2 smoke A–E pipeline shows the same qualitative recovery trend as the BERT track: pruning hurts performance, while both fine-tuning and KD recover it, with KD+FT performing best. At pruning rate 0.1, the smoke pipeline gives A=0.6406, B=0.6133, C=0.7148, D=0.7227, and E=0.7539 accuracy. The standalone full KD run reaches validation loss 0.329678921431303, validation accuracy 0.8870, and macro-F1 0.8869981919710715. The 3×3 KD sweep over `alpha ∈ {0.3, 0.5, 0.7}` and `temperature ∈ {2, 4, 6}` selects `alpha=0.5, temperature=2.0` as the best configuration, with validation loss 0.3241055379137397, validation accuracy 0.8915, and macro-F1 0.8914999728749933.
+
+---
+
