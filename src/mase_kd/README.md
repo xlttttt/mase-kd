@@ -316,9 +316,5 @@ Outputs include:
 | D | `D_kd/` | Load B’s sparse checkpoint and distil from the GPT-2 teacher. |
 | E | `E_kd_ft/` | Load D’s best checkpoint and fine-tune again with hard labels only. |
 
-### Headline results
 
-The GPT-2 smoke A–E pipeline shows the same qualitative recovery trend as the BERT track: pruning hurts performance, while both fine-tuning and KD recover it, with KD+FT performing best. At pruning rate 0.1, the smoke pipeline gives A=0.6406, B=0.6133, C=0.7148, D=0.7227, and E=0.7539 accuracy. The standalone full KD run reaches validation loss 0.329678921431303, validation accuracy 0.8870, and macro-F1 0.8869981919710715. The 3×3 KD sweep over `alpha ∈ {0.3, 0.5, 0.7}` and `temperature ∈ {2, 4, 6}` selects `alpha=0.5, temperature=2.0` as the best configuration, with validation loss 0.3241055379137397, validation accuracy 0.8915, and macro-F1 0.8914999728749933.
-
----
 
