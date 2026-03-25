@@ -1,0 +1,10 @@
+alpha,temperature,val_loss,val_accuracy,val_f1,output_dir
+0.3,2.0,0.32694455539807676,0.888,0.8879982079713276,outputs/gpt2_imdb_grid_search/alpha_0.3_temp_2.0
+0.3,4.0,0.32366655322164295,0.8895,0.8894993093706836,outputs/gpt2_imdb_grid_search/alpha_0.3_temp_4.0
+0.3,6.0,0.3244745893739164,0.888,0.887999551998208,outputs/gpt2_imdb_grid_search/alpha_0.3_temp_6.0
+0.5,2.0,0.3241055520698428,0.8915,0.8914999728749933,outputs/gpt2_imdb_grid_search/alpha_0.5_temp_2.0
+0.5,4.0,0.3296789435073733,0.887,0.8869981919710715,outputs/gpt2_imdb_grid_search/alpha_0.5_temp_4.0
+0.5,6.0,0.3323819776885211,0.886,0.8859981759708155,outputs/gpt2_imdb_grid_search/alpha_0.5_temp_6.0
+0.7,2.0,0.32384842288307847,0.8895,0.8894997513744406,outputs/gpt2_imdb_grid_search/alpha_0.7_temp_2.0
+0.7,4.0,0.3333617743216455,0.8885,0.8884997491244355,outputs/gpt2_imdb_grid_search/alpha_0.7_temp_4.0
+0.7,6.0,0.33603489033691586,0.8875,0.8874986218581178,outputs/gpt2_imdb_grid_search/alpha_0.7_temp_6.0

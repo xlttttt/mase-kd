@@ -1,0 +1,8 @@
+{
+  "alpha": 0.5,
+  "temperature": 2.0,
+  "val_loss": 0.3241055520698428,
+  "val_accuracy": 0.8915,
+  "val_f1": 0.8914999728749933,
+  "output_dir": "outputs/gpt2_imdb_grid_search/alpha_0.5_temp_2.0"
+}
